@@ -384,13 +384,82 @@ function GeneratorPage() {
     }
 
     try {
-      // Clone agar perbaikan format Word tidak mengubah tampilan preview di halaman.
       const exportElement = element.cloneNode(true) as HTMLElement;
 
-      // Hapus elemen dekoratif yang tidak diperlukan dalam dokumen Word.
+      // Hapus elemen dekoratif yang tidak diperlukan di Word.
       exportElement.querySelectorAll("hr").forEach((node) => node.remove());
 
-      // Pastikan cover menjadi halaman 1 sendiri.
+      // Mengubah heading HTML menjadi paragraf biasa agar Word tidak menerapkan
+      // style Heading bawaan (yang sering menambahkan garis, spacing, atau indent).
+      exportElement.querySelectorAll<HTMLElement>("h1, h2, h3, h4").forEach((heading) => {
+        const replacement = document.createElement("p");
+        replacement.className = heading.tagName === "H1" || heading.tagName === "H2"
+          ? "SigmaHeading14"
+          : "SigmaHeading12";
+        replacement.innerHTML = heading.innerHTML;
+        replacement.style.border = "0";
+        replacement.style.boxShadow = "none";
+        replacement.style.margin = "0";
+        replacement.style.padding = "0";
+        replacement.style.textIndent = "0";
+        replacement.style.textAlign = heading.style.textAlign || "";
+        replacement.style.color = colorHex;
+        replacement.style.fontFamily = "'Times New Roman', Times, serif";
+        replacement.style.fontWeight = "bold";
+        replacement.style.lineHeight = "150%";
+        replacement.style.fontSize = heading.tagName === "H1" || heading.tagName === "H2" ? "14pt" : "12pt";
+        exportElement.replaceChild(replacement, heading);
+      });
+
+      // Ubah list menjadi paragraf tanpa indent Word bawaan.
+      const normalizeList = (list: HTMLElement) => {
+        const fragment = document.createDocumentFragment();
+        const ordered = list.tagName.toLowerCase() === "ol";
+        let number = 1;
+
+        Array.from(list.children).forEach((child) => {
+          if (!(child instanceof HTMLElement) || child.tagName.toLowerCase() !== "li") return;
+
+          const li = child as HTMLElement;
+          const nestedLists = Array.from(li.children).filter(
+            (node) => node instanceof HTMLElement && ["ul", "ol"].includes(node.tagName.toLowerCase())
+          ) as HTMLElement[];
+
+          nestedLists.forEach((nested) => nested.remove());
+
+          const paragraph = document.createElement("p");
+          paragraph.className = "SigmaBody";
+          paragraph.style.margin = "0";
+          paragraph.style.padding = "0";
+          paragraph.style.textIndent = "0";
+          paragraph.style.lineHeight = "150%";
+          paragraph.style.fontFamily = "'Times New Roman', Times, serif";
+          paragraph.style.fontSize = "12pt";
+          paragraph.innerHTML = `${ordered ? `${number}.` : "•"} ${li.innerHTML}`;
+
+          fragment.appendChild(paragraph);
+
+          nestedLists.forEach((nested) => {
+            const nestedFragment = normalizeList(nested);
+            fragment.appendChild(nestedFragment);
+          });
+
+          number += 1;
+        });
+
+        return fragment;
+      };
+
+      exportElement.querySelectorAll<HTMLElement>("ul, ol").forEach((list) => {
+        // Lewati list yang sudah berada di dalam list lain karena akan diproses
+        // ketika parent <li> ditangani.
+        if (list.parentElement?.closest("ul, ol")) return;
+
+        const fragment = normalizeList(list);
+        list.replaceWith(fragment);
+      });
+
+      // Cover khusus halaman pertama.
       const cover = exportElement.querySelector(".cover-page") as HTMLElement | null;
       if (cover) {
         cover.style.pageBreakAfter = "always";
@@ -398,39 +467,42 @@ function GeneratorPage() {
         cover.style.margin = "0";
         cover.style.padding = "0";
         cover.style.border = "0";
+        cover.style.boxShadow = "none";
         cover.style.minHeight = "230mm";
-        cover.style.display = "flex";
-        cover.style.flexDirection = "column";
-        cover.style.justifyContent = "center";
-        cover.style.alignItems = "center";
+        cover.style.display = "block";
+        cover.style.textAlign = "center";
 
-        // Hilangkan garis/pembatas dekoratif yang ada pada cover.
         cover.querySelectorAll<HTMLElement>("*").forEach((node) => {
           node.style.borderTop = "0";
           node.style.borderBottom = "0";
           node.style.borderLeft = "0";
           node.style.borderRight = "0";
           node.style.boxShadow = "none";
+          node.style.marginLeft = "0";
+          node.style.marginRight = "0";
+          node.style.textIndent = "0";
         });
 
-        const moduleRoot = cover.nextElementSibling as HTMLElement | null;
-        if (moduleRoot) {
-          moduleRoot.style.pageBreakBefore = "always";
-          moduleRoot.style.breakBefore = "page";
+        const coverTitle = cover.querySelector("p.SigmaHeading14") as HTMLElement | null;
+        if (coverTitle) {
+          coverTitle.style.paddingTop = "60mm";
+          coverTitle.style.margin = "0";
+        } else {
+          const firstHeading = cover.querySelector("p") as HTMLElement | null;
+          if (firstHeading) {
+            firstHeading.style.paddingTop = "60mm";
+          }
         }
       }
 
-      // Hilangkan garis dekoratif pada heading, tetapi pertahankan border tabel.
-      exportElement.querySelectorAll<HTMLElement>("h1, h2, h3, h4").forEach((heading) => {
-        heading.style.borderTop = "0";
-        heading.style.borderBottom = "0";
-        heading.style.borderLeft = "0";
-        heading.style.borderRight = "0";
-        heading.style.boxShadow = "none";
-        heading.style.marginTop = "0";
-        heading.style.marginBottom = "0";
-        heading.style.paddingTop = "0";
-        heading.style.paddingBottom = "0";
+      // Hilangkan seluruh border/shape pada elemen non-tabel.
+      exportElement.querySelectorAll<HTMLElement>("*").forEach((node) => {
+        if (node.closest("table")) return;
+        node.style.borderTop = node.classList.contains("cover-page") ? "0" : node.style.borderTop;
+        node.style.borderBottom = node.classList.contains("cover-page") ? "0" : node.style.borderBottom;
+        node.style.borderLeft = node.classList.contains("cover-page") ? "0" : node.style.borderLeft;
+        node.style.borderRight = node.classList.contains("cover-page") ? "0" : node.style.borderRight;
+        node.style.boxShadow = "none";
       });
 
       const html = `<!DOCTYPE html>
@@ -442,8 +514,9 @@ function GeneratorPage() {
 <title>Modul Ajar SIGMA</title>
 <style>
   @page WordSection1 {
-    size: 595.3pt 841.9pt;
-    margin: 70.87pt 56.69pt 70.87pt 85.04pt;
+    size: 21cm 29.7cm;
+    margin: 2.5cm 2cm 2.5cm 3cm;
+    mso-page-orientation: portrait;
   }
 
   div.WordSection1 {
@@ -453,116 +526,109 @@ function GeneratorPage() {
   html, body {
     margin: 0 !important;
     padding: 0 !important;
+    font-family: 'Times New Roman', Times, serif !important;
+    font-size: 12pt !important;
+    line-height: 150% !important;
+    color: #000 !important;
   }
 
-  body {
-    font-family: 'Times New Roman', Times, serif;
-    font-size: 12pt;
-    line-height: 1.5;
-    color: #000;
-  }
-
-  *,
   p,
   div,
   li,
   ul,
   ol,
-  h1,
-  h2,
-  h3,
-  h4,
   table,
   tbody,
   thead,
   tr,
   td,
   th {
-    box-sizing: border-box;
+    font-family: 'Times New Roman', Times, serif !important;
   }
 
   p,
   div,
-  li,
-  ul,
-  ol {
+  li {
+    font-size: 12pt;
+    line-height: 150%;
+    margin: 0 !important;
+    padding: 0 !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    text-indent: 0 !important;
+    mso-margin-top-alt: 0 !important;
+    mso-margin-bottom-alt: 0 !important;
+    mso-para-margin-left: 0 !important;
+    mso-para-margin-right: 0 !important;
+  }
+
+  p.SigmaBody {
+    font-size: 12pt !important;
+    line-height: 150% !important;
     margin: 0 !important;
     padding: 0 !important;
     text-indent: 0 !important;
     mso-margin-top-alt: 0 !important;
     mso-margin-bottom-alt: 0 !important;
-    line-height: 1.5;
+    mso-para-margin-left: 0 !important;
+    mso-para-margin-right: 0 !important;
   }
 
-  h1,
-  h2 {
-    font-family: 'Times New Roman', Times, serif !important;
+  p.SigmaHeading14 {
     font-size: 14pt !important;
-    font-weight: bold;
-    line-height: 1.5;
-    color: ${colorHex};
-    text-transform: uppercase;
+    font-weight: bold !important;
+    line-height: 150% !important;
+    color: ${colorHex} !important;
     margin: 0 !important;
     padding: 0 !important;
+    text-indent: 0 !important;
     border: 0 !important;
     box-shadow: none !important;
     text-decoration: none !important;
+    mso-margin-top-alt: 0 !important;
+    mso-margin-bottom-alt: 0 !important;
+    mso-para-margin-left: 0 !important;
+    mso-para-margin-right: 0 !important;
   }
 
-  h3,
-  h4 {
-    font-family: 'Times New Roman', Times, serif !important;
+  p.SigmaHeading12 {
     font-size: 12pt !important;
-    font-weight: bold;
-    line-height: 1.5;
-    color: ${colorHex};
+    font-weight: bold !important;
+    line-height: 150% !important;
+    color: ${colorHex} !important;
     margin: 0 !important;
     padding: 0 !important;
+    text-indent: 0 !important;
     border: 0 !important;
     box-shadow: none !important;
     text-decoration: none !important;
+    mso-margin-top-alt: 0 !important;
+    mso-margin-bottom-alt: 0 !important;
+    mso-para-margin-left: 0 !important;
+    mso-para-margin-right: 0 !important;
   }
 
   .cover-page {
     page-break-after: always !important;
     break-after: page !important;
-    text-align: center;
+    text-align: center !important;
     margin: 0 !important;
     padding: 0 !important;
-    min-height: 230mm;
-    border: 0 !important;
-    box-shadow: none !important;
-  }
-
-  .cover-page h1 {
-    font-size: 14pt !important;
-    border: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-  }
-
-  .cover-page,
-  .cover-page * {
-    font-family: 'Times New Roman', Times, serif !important;
-  }
-
-  .cover-page p,
-  .cover-page div {
-    font-size: 12pt !important;
-    line-height: 1.5;
+    min-height: 230mm !important;
     border: 0 !important;
     box-shadow: none !important;
   }
 
   .document-preview {
-    padding: 0 !important;
     margin: 0 !important;
+    padding: 0 !important;
   }
 
   ul,
   ol {
-    padding-left: 0 !important;
-    margin-left: 0 !important;
+    list-style: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
   }
 
   table {
@@ -585,8 +651,14 @@ function GeneratorPage() {
     vertical-align: top;
     font-family: 'Times New Roman', Times, serif !important;
     font-size: 12pt !important;
-    line-height: 1.5;
+    line-height: 150% !important;
     margin: 0 !important;
+    text-indent: 0 !important;
+  }
+
+  a {
+    color: #000 !important;
+    text-decoration: none !important;
   }
 </style>
 </head>
@@ -604,7 +676,7 @@ function GeneratorPage() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      window.setTimeout(() => URL.revokeObjectURL(url), 1500);
     } catch (err) {
       setError(err instanceof Error ? `Gagal membuat Word: ${err.message}` : "Gagal membuat Word.");
     }
