@@ -376,41 +376,75 @@ function GeneratorPage() {
     localStorage.removeItem(DRAFT_KEY);
   }
 
-  function downloadPdf() {
+  async function downloadPdf() {
     const element = document.getElementById("hasil-content");
-    if (!element) return;
-    html2pdf().set({
-      margin: [40, 30, 30, 40],
-      filename: `Modul-Ajar-${slugify(form.mata_pelajaran || "SIGMA")}.pdf`,
-      image: { type: "jpeg", quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-    }).from(element).save();
+    if (!element) {
+      setError("Konten modul belum tersedia untuk diekspor.");
+      return;
+    }
+
+    try {
+      await html2pdf().set({
+        margin: [40, 30, 30, 40],
+        filename: `Modul-Ajar-${slugify(form.mata_pelajaran || "SIGMA")}.pdf`,
+        image: { type: "jpeg", quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, logging: false },
+        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+      }).from(element).save();
+    } catch (err) {
+      setError(err instanceof Error ? `Gagal membuat PDF: ${err.message}` : "Gagal membuat PDF.");
+    }
   }
 
   function downloadWord() {
     const element = document.getElementById("hasil-content");
-    if (!element) return;
-    const html = `<!DOCTYPE html><html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset='utf-8'><title>Modul Ajar SIGMA</title><style>@page WordSection1{size:595.3pt 841.9pt;margin:113.4pt 85.05pt 85.05pt 113.4pt}div.WordSection1{page:WordSection1}body{font-family:'Times New Roman',serif;font-size:12pt;line-height:1.5;color:#000}h1{text-align:center;text-transform:uppercase;font-size:16pt;color:${colorHex};border-bottom:1px solid ${colorHex};padding-bottom:10px;margin-bottom:20px}h2{font-size:14pt;margin-top:20px;color:${colorHex};text-transform:uppercase}h3,h4{font-size:12pt;margin-top:15px}p,li{text-align:justify;line-height:1.5}table{border-collapse:collapse;width:100%;margin-top:10px;margin-bottom:10px;page-break-inside:auto}tr{page-break-inside:avoid;page-break-after:auto}th,td{border:1px solid #000;padding:8px;vertical-align:top;font-size:11pt}.cover-page{page-break-after:always;text-align:center}</style></head><body><div class='WordSection1'>${element.innerHTML}</div></body></html>`;
-    const blob = new Blob(["\ufeff", html], { type: "application/msword" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `Modul-Ajar-${slugify(form.mata_pelajaran || "SIGMA")}.doc`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    if (!element) {
+      setError("Konten modul belum tersedia untuk diekspor.");
+      return;
+    }
+
+    try {
+      const html = `<!DOCTYPE html><html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset='utf-8'><title>Modul Ajar SIGMA</title><style>@page WordSection1{size:595.3pt 841.9pt;margin:113.4pt 85.05pt 85.05pt 113.4pt}div.WordSection1{page:WordSection1}body{font-family:'Times New Roman',serif;font-size:12pt;line-height:1.5;color:#000}h1{text-align:center;text-transform:uppercase;font-size:16pt;color:${colorHex};border-bottom:1px solid ${colorHex};padding-bottom:10px;margin-bottom:20px}h2{font-size:14pt;margin-top:20px;color:${colorHex};text-transform:uppercase}h3,h4{font-size:12pt;margin-top:15px}p,li{text-align:justify;line-height:1.5}table{border-collapse:collapse;width:100%;margin-top:10px;margin-bottom:10px;page-break-inside:auto}tr{page-break-inside:avoid;page-break-after:auto}th,td{border:1px solid #000;padding:8px;vertical-align:top;font-size:11pt}.cover-page{page-break-after:always;text-align:center}</style></head><body><div class='WordSection1'>${element.innerHTML}</div></body></html>`;
+      const blob = new Blob(["\ufeff", html], { type: "application/msword" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Modul-Ajar-${slugify(form.mata_pelajaran || "SIGMA")}.doc`;
+      link.style.display = "none";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      setError(err instanceof Error ? `Gagal membuat Word: ${err.message}` : "Gagal membuat Word.");
+    }
   }
 
   async function copyMarkdown() {
     if (!resultMarkdown) return;
-    await navigator.clipboard.writeText(resultMarkdown);
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(resultMarkdown);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = resultMarkdown;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? `Gagal menyalin Markdown: ${err.message}` : "Gagal menyalin Markdown.");
+    }
   }
 
   function editInput() {
-    window.scrollTo({ top: 0, behavior: "smooth" });
-    setTimeout(() => document.getElementById("generator-form")?.querySelector<HTMLInputElement>("input")?.focus(), 450);
+    const formElement = document.getElementById("generator-form");
+    formElement?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setTimeout(() => formElement?.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input, textarea, select")?.focus(), 450);
   }
 
   function sendWhatsApp(name: string, message: string) {
@@ -624,7 +658,7 @@ function GeneratorPage() {
             </div>
           </section>
 
-          <div className="sticky bottom-4 z-30 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="sticky bottom-4 z-10 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <button type="submit" disabled={loading} className="flex w-full items-center justify-center gap-3 rounded-lg bg-blue-600 px-5 py-3 text-base font-extrabold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-75">
               {loading ? loadingMessages[loadingStage] : "Buat Modul Ajar"} {loading ? <span className="animate-pulse">●</span> : <span>⚡</span>}
             </button>
@@ -634,7 +668,7 @@ function GeneratorPage() {
         <div id="hasil" className="scroll-mt-24" />
         {resultMarkdown && (
           <section id="hasil-container" className="mb-8 flex min-h-[360px] flex-col rounded-xl border border-blue-100 bg-white shadow-lg">
-            <div className="flex flex-col items-start justify-between gap-3 rounded-t-xl border-b border-slate-100 bg-gradient-to-r from-blue-50 to-white p-4 lg:flex-row lg:items-center">
+            <div className="relative z-40 flex flex-col items-start justify-between gap-3 rounded-t-xl border-b border-slate-100 bg-gradient-to-r from-blue-50 to-white p-4 lg:flex-row lg:items-center">
               <div><h2 className="flex items-center gap-2 text-lg font-extrabold text-blue-900">📄 Pratinjau Modul</h2><p className="mt-1 text-xs text-slate-500">Hasil dapat diedit dengan mengubah input lalu Regenerate.</p></div>
               <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3 lg:w-auto">
                 <button type="button" onClick={editInput} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 sm:text-sm">Edit Input</button>
