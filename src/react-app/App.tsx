@@ -4,7 +4,7 @@ import DOMPurify from "dompurify";
 import html2pdf from "html2pdf.js";
 import * as mammoth from "mammoth";
 
-const DRAFT_KEY = "sigma:generator-draft:v3";
+const DRAFT_KEY = "sigma:generator-draft:v4";
 const WHATSAPP_NUMBER = "6285860565852";
 const MAX_REFERENCE_FILE_BYTES = 15 * 1024 * 1024;
 const OFFICIAL_CP_REFERENCE_URL = "https://uploads.belajar.id/document/files/Kepka_BSKAP_No_01k17e8396ajn15j3hcw0k773b.pdf";
@@ -60,17 +60,17 @@ const initialForm: GeneratorForm = {
   capaian_pembelajaran: "",
   materi_pembelajaran: "",
   alokasi_waktu: "",
-  praktik_pedagogis: "Pembelajaran Berbasis Projek (Project-Based Learning)",
-  metode_pembelajaran: "Diskusi, tanya jawab, praktik, presentasi",
-  pendekatan_pembelajaran: "Pembelajaran Mendalam (Deep Learning)",
+  praktik_pedagogis: "",
+  metode_pembelajaran: "",
+  pendekatan_pembelajaran: "",
   prinsip_pembelajaran_mendalam: "Berkesadaran, Bermakna, Menggembirakan",
   pengalaman_belajar: "Memahami, Mengaplikasi, Merefleksi",
   kemitraan_pembelajaran: "",
   lingkungan_pembelajaran: "",
   pemanfaatan_digital: "",
-  asesmen_awal: "Diagnostik",
-  asesmen_proses: "Formatif + observasi + umpan balik",
-  asesmen_akhir: "Sumatif",
+  asesmen_awal: "",
+  asesmen_proses: "",
+  asesmen_akhir: "",
   sumber_referensi_url: OFFICIAL_CP_REFERENCE_URL,
 };
 
