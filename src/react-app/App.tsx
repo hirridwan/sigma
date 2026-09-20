@@ -60,9 +60,9 @@ const initialForm: GeneratorForm = {
   capaian_pembelajaran: "",
   materi_pembelajaran: "",
   alokasi_waktu: "",
-  praktik_pedagogis: "Pembelajaran Berbasis Projek",
+  praktik_pedagogis: "Pembelajaran Berbasis Projek (Project-Based Learning)",
   metode_pembelajaran: "Diskusi, tanya jawab, praktik, presentasi",
-  pendekatan_pembelajaran: "Pembelajaran Mendalam",
+  pendekatan_pembelajaran: "Pembelajaran Mendalam (Deep Learning)",
   prinsip_pembelajaran_mendalam: "Berkesadaran, Bermakna, Menggembirakan",
   pengalaman_belajar: "Memahami, Mengaplikasi, Merefleksi",
   kemitraan_pembelajaran: "",
@@ -475,13 +475,13 @@ function GeneratorPage() {
                 value={form.praktik_pedagogis}
                 onChange={(v) => update("praktik_pedagogis", v)}
                 options={[
-                  "Pembelajaran Berbasis Projek",
-                  "Pembelajaran Berbasis Masalah",
-                  "Pembelajaran Berbasis Inkuiri",
-                  "Pembelajaran Kolaboratif",
-                  "Pembelajaran Kontekstual",
-                  "Pembelajaran Berdiferensiasi",
-                  "Pembelajaran STEM",
+                  "Pembelajaran Berbasis Projek (Project-Based Learning)",
+                  "Pembelajaran Berbasis Masalah (Problem-Based Learning)",
+                  "Pembelajaran Berbasis Inkuiri (Inquiry-Based Learning)",
+                  "Pembelajaran Kolaboratif (Collaborative Learning)",
+                  "Pembelajaran Kontekstual (Contextual Learning)",
+                  "Pembelajaran Berdiferensiasi (Differentiated Instruction)",
+                  "Pembelajaran STEM (Science, Technology, Engineering, Mathematics)",
                   "Lainnya / Isi Sendiri",
                 ]}
                 placeholder="Pilih praktik pedagogis"
@@ -494,7 +494,7 @@ function GeneratorPage() {
                 value={form.pendekatan_pembelajaran}
                 onChange={(v) => update("pendekatan_pembelajaran", v)}
                 options={[
-                  "Pembelajaran Mendalam",
+                  "Pembelajaran Mendalam (Deep Learning)",
                   "Lainnya / Isi Sendiri",
                 ]}
                 placeholder="Pilih pendekatan pembelajaran"
@@ -573,7 +573,7 @@ function GeneratorPage() {
                   label="Selama Proses"
                   value={form.asesmen_proses}
                   onChange={(v) => update("asesmen_proses", v)}
-                  options={["Formatif", "Observasi", "Unjuk Kerja", "Diskusi", "Umpan Balik", "Peer Assessment", "Lainnya / Isi Sendiri"]}
+                  options={["Formatif", "Observasi", "Unjuk Kerja", "Diskusi (Discussion)", "Umpan Balik", "Peer Assessment", "Lainnya / Isi Sendiri"]}
                   placeholder="Pilih asesmen proses"
                   customPlaceholder="Tuliskan asesmen proses..."
                   required
@@ -582,7 +582,7 @@ function GeneratorPage() {
                   label="Akhir Pembelajaran"
                   value={form.asesmen_akhir}
                   onChange={(v) => update("asesmen_akhir", v)}
-                  options={["Sumatif", "Tes Tertulis", "Produk / Projek", "Presentasi", "Portofolio", "Unjuk Kerja", "Lainnya / Isi Sendiri"]}
+                  options={["Sumatif", "Tes Tertulis", "Produk / Projek", "Presentasi (Presentation)", "Portofolio", "Unjuk Kerja", "Lainnya / Isi Sendiri"]}
                   placeholder="Pilih asesmen akhir"
                   customPlaceholder="Tuliskan asesmen akhir..."
                   required
@@ -738,7 +738,7 @@ function SelectWithCustom({ label, value, onChange, options, placeholder, custom
 }
 
 function MethodSelector({ label, value, onChange, fullWidth = false }: { label: string; value: string; onChange: (value: string) => void; fullWidth?: boolean }) {
-  const options = ["Ceramah / penjelasan langsung", "Diskusi", "Tanya jawab", "Demonstrasi", "Praktik / latihan", "Kerja kelompok", "Studi kasus", "Presentasi", "Simulasi", "Eksperimen", "Penugasan"];
+  const options = ["Ceramah / Penjelasan Langsung (Direct Instruction)", "Diskusi (Discussion)", "Tanya Jawab (Question and Answer)", "Demonstrasi (Demonstration)", "Praktik / Latihan (Practice)", "Kerja Kelompok (Group Work)", "Studi Kasus (Case Study)", "Presentasi (Presentation)", "Simulasi (Simulation)", "Eksperimen (Experiment)", "Penugasan (Assignment)"];
   const selected = value.split(",").map((item) => item.trim()).filter(Boolean);
   const toggle = (option: string) => {
     const next = selected.includes(option) ? selected.filter((item) => item !== option) : [...selected, option];
