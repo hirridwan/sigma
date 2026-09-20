@@ -4,7 +4,7 @@ import DOMPurify from "dompurify";
 import html2pdf from "html2pdf.js";
 import * as mammoth from "mammoth";
 
-const DRAFT_KEY = "sigma:generator-draft:v2";
+const DRAFT_KEY = "sigma:generator-draft:v3";
 const WHATSAPP_NUMBER = "6285860565852";
 const MAX_REFERENCE_FILE_BYTES = 15 * 1024 * 1024;
 const OFFICIAL_CP_REFERENCE_URL = "https://uploads.belajar.id/document/files/Kepka_BSKAP_No_01k17e8396ajn15j3hcw0k773b.pdf";
@@ -32,9 +32,17 @@ type GeneratorForm = {
   capaian_pembelajaran: string;
   materi_pembelajaran: string;
   alokasi_waktu: string;
-  model_pembelajaran: string;
+  praktik_pedagogis: string;
+  metode_pembelajaran: string;
   pendekatan_pembelajaran: string;
-  jenis_asesmen: string;
+  prinsip_pembelajaran_mendalam: string;
+  pengalaman_belajar: string;
+  kemitraan_pembelajaran: string;
+  lingkungan_pembelajaran: string;
+  pemanfaatan_digital: string;
+  asesmen_awal: string;
+  asesmen_proses: string;
+  asesmen_akhir: string;
   sumber_referensi_url: string;
 };
 
@@ -52,9 +60,17 @@ const initialForm: GeneratorForm = {
   capaian_pembelajaran: "",
   materi_pembelajaran: "",
   alokasi_waktu: "",
-  model_pembelajaran: "",
-  pendekatan_pembelajaran: "",
-  jenis_asesmen: "",
+  praktik_pedagogis: "Pembelajaran Berbasis Projek",
+  metode_pembelajaran: "Diskusi, tanya jawab, praktik, presentasi",
+  pendekatan_pembelajaran: "Pembelajaran Mendalam",
+  prinsip_pembelajaran_mendalam: "Berkesadaran, Bermakna, Menggembirakan",
+  pengalaman_belajar: "Memahami, Mengaplikasi, Merefleksi",
+  kemitraan_pembelajaran: "",
+  lingkungan_pembelajaran: "",
+  pemanfaatan_digital: "",
+  asesmen_awal: "Diagnostik",
+  asesmen_proses: "Formatif + observasi + umpan balik",
+  asesmen_akhir: "Sumatif",
   sumber_referensi_url: OFFICIAL_CP_REFERENCE_URL,
 };
 
@@ -72,8 +88,18 @@ B. Lintas Disiplin Ilmu
 C. Tujuan Pembelajaran
 D. Topik Pembelajaran Kontekstual
 E. Kerangka Pembelajaran
-F. Kegiatan Pembelajaran (tabel: No, Kegiatan, Langkah-Langkah, Alokasi Waktu)
-G. Asesmen
+   1. Praktik Pedagogis
+   2. Kemitraan Pembelajaran
+   3. Lingkungan Pembelajaran
+   4. Pemanfaatan Digital
+F. Pembelajaran Mendalam
+   1. Prinsip: Berkesadaran, Bermakna, Menggembirakan
+   2. Pengalaman Belajar: Memahami, Mengaplikasi, Merefleksi
+G. Kegiatan Pembelajaran (Pendahuluan, Inti, Penutup)
+H. Asesmen
+   1. Awal Pembelajaran
+   2. Selama Proses Pembelajaran
+   3. Akhir Pembelajaran
 
 LAMPIRAN
 
@@ -269,7 +295,7 @@ function GeneratorPage() {
     event?.preventDefault();
     setError("");
 
-    if (!form.nama_penyusun || !form.identitas_sekolah || !form.kurikulum || !form.fase_kelas_jenjang || !form.mata_pelajaran || !form.bab_tema || !form.capaian_pembelajaran || !form.materi_pembelajaran || !form.alokasi_waktu || !form.model_pembelajaran || !form.pendekatan_pembelajaran || !form.jenis_asesmen) {
+    if (!form.nama_penyusun || !form.identitas_sekolah || !form.kurikulum || !form.fase_kelas_jenjang || !form.mata_pelajaran || !form.bab_tema || !form.capaian_pembelajaran || !form.materi_pembelajaran || !form.alokasi_waktu || !form.praktik_pedagogis || !form.metode_pembelajaran || !form.pendekatan_pembelajaran || !form.asesmen_awal || !form.asesmen_proses || !form.asesmen_akhir) {
       setError("Lengkapi semua field wajib sebelum membuat modul.");
       return;
     }
@@ -299,6 +325,14 @@ function GeneratorPage() {
     try {
       const payload = new FormData();
       for (const [key, value] of Object.entries(form)) payload.append(key, value);
+
+      // Alias kompatibilitas dengan Worker versi sebelumnya.
+      payload.append("model_pembelajaran", form.praktik_pedagogis);
+      payload.append("jenis_asesmen", [
+        `Awal: ${form.asesmen_awal}`,
+        `Proses: ${form.asesmen_proses}`,
+        `Akhir: ${form.asesmen_akhir}`,
+      ].join("; "));
       if (referenceFile) {
         payload.append("reference_file", referenceFile, referenceFile.name);
         payload.append("reference_file_name", referenceFile.name);
@@ -434,76 +468,129 @@ function GeneratorPage() {
 
           <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
             <SectionTitle number="3" title="Desain Pembelajaran" />
-            <div className="mb-5 grid grid-cols-1 gap-3.5 md:grid-cols-2">
-              <SelectOrCustomInput
-                label="Model Pembelajaran"
-                value={form.model_pembelajaran}
-                onChange={(v) => update("model_pembelajaran", v)}
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <SelectWithCustom
+                label="Praktik Pedagogis"
+                value={form.praktik_pedagogis}
+                onChange={(v) => update("praktik_pedagogis", v)}
                 options={[
-                  "Project-Based Learning (PjBL)",
-                  "Problem-Based Learning (PBL)",
-                  "Discovery Learning",
-                  "Inquiry Learning",
-                  "Cooperative Learning",
-                  "Collaborative Learning",
-                  "Contextual Teaching and Learning (CTL)",
-                  "Direct Instruction",
-                  "Flipped Classroom",
-                  "Blended Learning",
+                  "Pembelajaran Berbasis Projek",
+                  "Pembelajaran Berbasis Masalah",
+                  "Pembelajaran Berbasis Inkuiri",
+                  "Pembelajaran Kolaboratif",
+                  "Pembelajaran Kontekstual",
+                  "Pembelajaran Berdiferensiasi",
+                  "Pembelajaran STEM",
+                  "Lainnya / Isi Sendiri",
                 ]}
-                placeholder="Pilih model pembelajaran"
-                customLabel="Lainnya / Isi Sendiri"
-                customPlaceholder="Contoh: model pembelajaran yang digunakan..."
+                placeholder="Pilih praktik pedagogis"
+                customPlaceholder="Tuliskan praktik pedagogis yang digunakan..."
                 required
               />
-              <SelectOrCustomInput
+
+              <SelectWithCustom
                 label="Pendekatan Pembelajaran"
                 value={form.pendekatan_pembelajaran}
                 onChange={(v) => update("pendekatan_pembelajaran", v)}
                 options={[
-                  "Pembelajaran Mendalam (Deep Learning)",
-                  "Pembelajaran Berdiferensiasi (Differentiated Instruction)",
-                  "Teaching at the Right Level (TaRL)",
-                  "Pendekatan Saintifik",
-                  "Pendekatan Kontekstual",
-                  "Culturally Responsive Teaching (CRT)",
-                  "Pembelajaran Berbasis Masalah",
-                  "Pembelajaran Berbasis Proyek",
+                  "Pembelajaran Mendalam",
+                  "Lainnya / Isi Sendiri",
                 ]}
                 placeholder="Pilih pendekatan pembelajaran"
-                customLabel="Lainnya / Isi Sendiri"
-                customPlaceholder="Contoh: pendekatan pembelajaran yang digunakan..."
+                customPlaceholder="Tuliskan pendekatan pembelajaran lain..."
                 required
               />
-              <SelectOrCustomInput
-                label="Asesmen yang Digunakan"
-                value={form.jenis_asesmen}
-                onChange={(v) => update("jenis_asesmen", v)}
-                options={[
-                  "Diagnostik, Formatif, dan Sumatif",
-                  "Asesmen of Learning",
-                  "Asesmen for Learning",
-                  "Asesmen as Learning",
-                  "Observasi",
-                  "Tes Tertulis",
-                  "Tes Lisan",
-                  "Kinerja / Praktik",
-                  "Proyek",
-                  "Produk",
-                  "Portofolio",
-                  "Presentasi",
-                  "Self Assessment",
-                  "Peer Assessment",
-                ]}
-                placeholder="Pilih jenis asesmen"
-                customLabel="Lainnya / Isi Sendiri"
-                customPlaceholder="Contoh: observasi + proyek + presentasi..."
-                required
+
+              <MethodSelector
+                label="Metode / Teknik Pendukung"
+                value={form.metode_pembelajaran}
+                onChange={(v) => update("metode_pembelajaran", v)}
+                fullWidth
+              />
+
+              <div className="md:col-span-2 rounded-xl border border-blue-100 bg-blue-50/60 p-4">
+                <div className="mb-3">
+                  <h3 className="text-sm font-bold text-blue-900">Pembelajaran Mendalam</h3>
+                  <p className="mt-1 text-xs leading-relaxed text-blue-700">Prinsip dan pengalaman belajar berikut mengikuti kerangka Pembelajaran Mendalam.</p>
+                </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <TagCheckboxGroup
+                    label="Prinsip Pembelajaran"
+                    options={["Berkesadaran", "Bermakna", "Menggembirakan"]}
+                    value={form.prinsip_pembelajaran_mendalam}
+                    onChange={(v) => update("prinsip_pembelajaran_mendalam", v)}
+                  />
+                  <TagCheckboxGroup
+                    label="Pengalaman Belajar"
+                    options={["Memahami", "Mengaplikasi", "Merefleksi"]}
+                    value={form.pengalaman_belajar}
+                    onChange={(v) => update("pengalaman_belajar", v)}
+                  />
+                </div>
+              </div>
+
+              <TextArea
+                label="Kemitraan Pembelajaran (Opsional)"
+                value={form.kemitraan_pembelajaran}
+                onChange={(v) => update("kemitraan_pembelajaran", v)}
+                placeholder="Contoh: orang tua, masyarakat, komunitas, dunia kerja, mitra sekolah..."
+                hint="Isi hanya bila relevan dengan pembelajaran."
+              />
+              <TextArea
+                label="Lingkungan Pembelajaran (Opsional)"
+                value={form.lingkungan_pembelajaran}
+                onChange={(v) => update("lingkungan_pembelajaran", v)}
+                placeholder="Contoh: ruang kelas, laboratorium, ruang virtual, budaya belajar..."
+                hint="Boleh memuat aspek fisik, virtual, dan budaya belajar."
+              />
+              <TextArea
+                label="Pemanfaatan Digital (Opsional)"
+                value={form.pemanfaatan_digital}
+                onChange={(v) => update("pemanfaatan_digital", v)}
+                placeholder="Contoh: LMS, simulasi, presentasi, video, internet, aplikasi pembelajaran..."
+                hint="Tuliskan perangkat atau aplikasi yang benar-benar akan digunakan."
                 fullWidth
               />
             </div>
 
-            <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-3.5">
+            <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="mb-3">
+                <h3 className="text-sm font-bold text-slate-800">Asesmen</h3>
+                <p className="mt-1 text-xs leading-relaxed text-slate-500">Atur asesmen berdasarkan waktu pelaksanaannya: awal, proses, dan akhir pembelajaran.</p>
+              </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <SelectWithCustom
+                  label="Awal Pembelajaran"
+                  value={form.asesmen_awal}
+                  onChange={(v) => update("asesmen_awal", v)}
+                  options={["Diagnostik", "Kuis Awal", "Observasi Awal", "Tanya Jawab Awal", "Lainnya / Isi Sendiri"]}
+                  placeholder="Pilih asesmen awal"
+                  customPlaceholder="Tuliskan asesmen awal..."
+                  required
+                />
+                <SelectWithCustom
+                  label="Selama Proses"
+                  value={form.asesmen_proses}
+                  onChange={(v) => update("asesmen_proses", v)}
+                  options={["Formatif", "Observasi", "Unjuk Kerja", "Diskusi", "Umpan Balik", "Peer Assessment", "Lainnya / Isi Sendiri"]}
+                  placeholder="Pilih asesmen proses"
+                  customPlaceholder="Tuliskan asesmen proses..."
+                  required
+                />
+                <SelectWithCustom
+                  label="Akhir Pembelajaran"
+                  value={form.asesmen_akhir}
+                  onChange={(v) => update("asesmen_akhir", v)}
+                  options={["Sumatif", "Tes Tertulis", "Produk / Projek", "Presentasi", "Portofolio", "Unjuk Kerja", "Lainnya / Isi Sendiri"]}
+                  placeholder="Pilih asesmen akhir"
+                  customPlaceholder="Tuliskan asesmen akhir..."
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50/60 p-3.5">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <h3 className="flex items-center gap-2 text-sm font-bold text-blue-900">🔗 Referensi Capaian Pembelajaran (Pemerintah)</h3>
                 <span className="text-xs text-blue-500">Dipakai sebagai konteks AI</span>
@@ -517,17 +604,8 @@ function GeneratorPage() {
                 required
               />
               <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-xs leading-relaxed text-slate-500">
-                  URL default mengarah ke dokumen CP resmi yang kamu berikan. Guru tetap dapat menggantinya dengan sumber CP lain yang relevan.
-                </p>
-                <a
-                  href={form.sumber_referensi_url || OFFICIAL_CP_REFERENCE_URL}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="shrink-0 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-100"
-                >
-                  Buka Dokumen
-                </a>
+                <p className="text-xs leading-relaxed text-slate-500">URL default mengarah ke dokumen CP resmi yang kamu berikan. Guru dapat menggantinya jika menggunakan dokumen CP yang lain.</p>
+                <a href={form.sumber_referensi_url || OFFICIAL_CP_REFERENCE_URL} target="_blank" rel="noreferrer" className="shrink-0 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-100">Buka Dokumen</a>
               </div>
             </div>
 
@@ -628,88 +706,80 @@ function TextArea({
   );
 }
 
-function SelectOrCustomInput({
-  label,
-  value,
-  onChange,
-  options,
-  placeholder,
-  customLabel = "Lainnya / Isi Sendiri",
-  customPlaceholder = "Isi pilihan sendiri...",
-  fullWidth = false,
-  required = false,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  options: string[];
-  placeholder: string;
-  customLabel?: string;
-  customPlaceholder?: string;
-  fullWidth?: boolean;
-  required?: boolean;
-}) {
-  const isStandardValue = options.includes(value);
-  const [mode, setMode] = useState<"preset" | "custom">(isStandardValue ? "preset" : value ? "custom" : "preset");
-  const [customValue, setCustomValue] = useState(isStandardValue ? "" : value);
+function SelectWithCustom({ label, value, onChange, options, placeholder, customPlaceholder, required = false, fullWidth = false }: { label: string; value: string; onChange: (value: string) => void; options: string[]; placeholder: string; customPlaceholder: string; required?: boolean; fullWidth?: boolean }) {
+  const CUSTOM = "Lainnya / Isi Sendiri";
+  const isCustom = value === CUSTOM || (value && !options.includes(value));
+  const selectValue = isCustom ? CUSTOM : value;
 
-  useEffect(() => {
-    if (options.includes(value)) {
-      setMode("preset");
-      setCustomValue("");
-    } else if (value) {
-      setMode("custom");
-      setCustomValue(value);
-    }
-  }, [value, options]);
+  return (
+    <div className={fullWidth ? "md:col-span-2" : ""}>
+      <label className="mb-1.5 block text-sm font-semibold text-slate-700">{label}</label>
+      <select
+        value={selectValue}
+        onChange={(e) => onChange(e.target.value === CUSTOM ? CUSTOM : e.target.value)}
+        required={required && !isCustom}
+        className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none transition-shadow focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+      >
+        <option value="" disabled>{placeholder}</option>
+        {options.map((option) => <option key={option} value={option}>{option}</option>)}
+      </select>
+      {isCustom && (
+        <input
+          value={value === CUSTOM ? "" : value}
+          onChange={(e) => onChange(e.target.value || CUSTOM)}
+          placeholder={customPlaceholder}
+          autoFocus
+          required={required}
+          className="mt-2 w-full rounded-lg border border-blue-300 bg-blue-50/40 px-3 py-2 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+        />
+      )}
+    </div>
+  );
+}
 
-  const handleSelect = (nextValue: string) => {
-    if (nextValue === "__custom__") {
-      setMode("custom");
-      setCustomValue(customValue || "");
-      onChange(customValue || "");
-      return;
-    }
-
-    setMode("preset");
-    setCustomValue("");
-    onChange(nextValue);
+function MethodSelector({ label, value, onChange, fullWidth = false }: { label: string; value: string; onChange: (value: string) => void; fullWidth?: boolean }) {
+  const options = ["Ceramah / penjelasan langsung", "Diskusi", "Tanya jawab", "Demonstrasi", "Praktik / latihan", "Kerja kelompok", "Studi kasus", "Presentasi", "Simulasi", "Eksperimen", "Penugasan"];
+  const selected = value.split(",").map((item) => item.trim()).filter(Boolean);
+  const toggle = (option: string) => {
+    const next = selected.includes(option) ? selected.filter((item) => item !== option) : [...selected, option];
+    onChange(next.join(", "));
   };
 
   return (
     <div className={fullWidth ? "md:col-span-2" : ""}>
       <label className="mb-1.5 block text-sm font-semibold text-slate-700">{label}</label>
-
-      <select
-        value={mode === "custom" ? "__custom__" : value}
-        onChange={(e) => handleSelect(e.target.value)}
-        required={required && mode === "preset"}
-        className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none transition-shadow focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
-      >
-        <option value="" disabled>{placeholder}</option>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
         {options.map((option) => (
-          <option key={option} value={option}>{option}</option>
+          <label key={option} className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition ${selected.includes(option) ? "border-blue-300 bg-blue-50 text-blue-800" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
+            <input type="checkbox" checked={selected.includes(option)} onChange={() => toggle(option)} className="h-3.5 w-3.5 accent-blue-600" />
+            <span>{option}</span>
+          </label>
         ))}
-        <option value="__custom__">{customLabel}</option>
-      </select>
+      </div>
+      <input value={value} onChange={(e) => onChange(e.target.value)} className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500" placeholder="Tambahkan metode/teknik lain, jika diperlukan..." />
+      <p className="mt-1 text-xs text-slate-400">Boleh memilih beberapa. Kamu juga dapat mengetik sendiri.</p>
+    </div>
+  );
+}
 
-      {mode === "custom" && (
-        <div className="mt-2">
-          <input
-            type="text"
-            value={customValue}
-            onChange={(e) => {
-              const nextValue = e.target.value;
-              setCustomValue(nextValue);
-              onChange(nextValue);
-            }}
-            placeholder={customPlaceholder}
-            required={required}
-            className="w-full rounded-lg border border-blue-200 bg-blue-50/50 px-3 py-2 outline-none transition-shadow focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
-          />
-          <p className="mt-1 text-xs text-slate-400">Masukkan pilihan guru yang belum tersedia di daftar.</p>
-        </div>
-      )}
+function TagCheckboxGroup({ label, options, value, onChange }: { label: string; options: string[]; value: string; onChange: (value: string) => void }) {
+  const selected = value.split(",").map((item) => item.trim()).filter(Boolean);
+  const toggle = (option: string) => {
+    const next = selected.includes(option) ? selected.filter((item) => item !== option) : [...selected, option];
+    onChange(next.join(", "));
+  };
+
+  return (
+    <div>
+      <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-blue-900">{label}</label>
+      <div className="flex flex-wrap gap-2">
+        {options.map((option) => (
+          <label key={option} className={`cursor-pointer rounded-full border px-3 py-1.5 text-xs font-semibold transition ${selected.includes(option) ? "border-blue-300 bg-blue-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
+            <input type="checkbox" checked={selected.includes(option)} onChange={() => toggle(option)} className="sr-only" />
+            {option}
+          </label>
+        ))}
+      </div>
     </div>
   );
 }

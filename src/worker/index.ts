@@ -78,7 +78,7 @@ function buildReferenceSection(referenceUrl: string, referenceFileName: string):
 }
 
 function buildDefaultStructure(): string {
-  return `Gunakan urutan heading dan komponen berikut secara KETAT. Jangan menambah, menghapus, atau menukar urutan bagian utama:
+  return `Gunakan urutan heading dan komponen berikut secara KETAT. Jangan mengubah urutan bagian utama:
 
 INFORMASI UMUM
 A. Identitas Modul
@@ -92,30 +92,28 @@ B. Lintas Disiplin Ilmu
 C. Tujuan Pembelajaran
 D. Topik Pembelajaran Kontekstual
 E. Kerangka Pembelajaran
-   1. Praktik Pedagogi
-      a. Model Pembelajaran
-      b. Pendekatan Pembelajaran
-      c. Metode Pembelajaran
+   1. Praktik Pedagogis
+      - Praktik pedagogis utama yang dipilih pendidik
+      - Metode/teknik pendukung yang digunakan
    2. Kemitraan Pembelajaran
-      a. Lingkungan Sekolah
-      b. Lingkungan Luar Sekolah
-      c. Masyarakat
-   3. Lingkungan Belajar
-      a. Ruang Fisik
-      b. Ruang Virtual
-      c. Budaya Belajar
+   3. Lingkungan Pembelajaran
    4. Pemanfaatan Digital
-      a. Perangkat Digital
-      b. Aplikasi Pembelajaran
-F. Kegiatan Pembelajaran
+F. Pembelajaran Mendalam
+   1. Prinsip Pembelajaran: berkesadaran, bermakna, menggembirakan
+   2. Pengalaman Belajar: memahami, mengaplikasi, merefleksi
+G. Kegiatan Pembelajaran
    Gunakan tabel Markdown dengan kolom: No, Kegiatan, Langkah-Langkah, Alokasi Waktu.
    Wajib ada Pendahuluan, Kegiatan Inti, dan Penutup.
-G. Asesmen
+H. Asesmen
+   1. Asesmen pada awal pembelajaran
+   2. Asesmen selama proses pembelajaran
+   3. Asesmen pada akhir pembelajaran
 
 LAMPIRAN
 A. Ringkasan Materi
+B. Sumber Referensi
 
-JANGAN membuat bagian Sumber Referensi sendiri. Bagian tersebut akan ditambahkan otomatis oleh aplikasi berdasarkan sumber yang benar-benar diberikan pengguna.`;
+JANGAN membuat bagian sumber referensi sendiri. Bagian tersebut akan ditambahkan otomatis oleh aplikasi berdasarkan sumber yang benar-benar diberikan pengguna.`;
 }
 
 function buildPrompt(data: Record<string, string>, referenceContext: string): string {
@@ -128,14 +126,17 @@ function buildPrompt(data: Record<string, string>, referenceContext: string): st
 
 ${data.template_custom || "(Struktur custom kosong.)"}
 
-Jangan membuat bagian Sumber Referensi sendiri. Bagian tersebut ditambahkan otomatis oleh aplikasi.`;
+Tetap masukkan bagian Pembelajaran Mendalam dan Asesmen awal/proses/akhir bila struktur custom tidak menyediakannya. Jangan membuat sumber referensi sendiri.`;
   } else {
     structure = `Tentukan struktur modul yang paling efektif untuk kebutuhan pengguna.
-Tetap pertahankan komponen inti yang relevan: identitas, kesiapan peserta didik, karakteristik mata pelajaran, tujuan, kegiatan pembelajaran, asesmen, dan lampiran.
-Jangan membuat bagian Sumber Referensi sendiri. Bagian tersebut ditambahkan otomatis oleh aplikasi.`;
+Tetap gunakan kerangka Pembelajaran Mendalam sebagai acuan: praktik pedagogis, kemitraan pembelajaran, lingkungan pembelajaran, pemanfaatan digital; prinsip berkesadaran, bermakna, menggembirakan; serta pengalaman belajar memahami, mengaplikasi, merefleksi.
+Asesmen harus mempertimbangkan awal, proses, dan akhir pembelajaran.`;
   }
 
   return `Anda adalah asisten penyusun modul ajar profesional untuk pendidik di Indonesia.
+
+KONTEKS KEBIJAKAN PEMBELAJARAN:
+Gunakan istilah dan kerangka Pembelajaran Mendalam sesuai panduan pemerintah: Pembelajaran Mendalam merupakan pendekatan yang menekankan suasana belajar dan proses pembelajaran berkesadaran, bermakna, dan menggembirakan. Kerangka pembelajaran mencakup praktik pedagogis, kemitraan pembelajaran, lingkungan pembelajaran, dan pemanfaatan digital. Pengalaman belajar mencakup memahami, mengaplikasi, dan merefleksi. Jangan menyamakan pendekatan Pembelajaran Mendalam dengan model atau metode pembelajaran tertentu.
 
 TUGAS UTAMA:
 Susun satu modul ajar lengkap dalam Bahasa Indonesia berdasarkan seluruh data pengguna.
@@ -151,9 +152,17 @@ DATA PENGGUNA:
 - Capaian Pembelajaran: ${data.capaian_pembelajaran}
 - Materi Pembelajaran: ${data.materi_pembelajaran}
 - Alokasi Waktu: ${data.alokasi_waktu}
-- Model Pembelajaran: ${data.model_pembelajaran}
-- Pendekatan Pembelajaran: ${data.pendekatan_pembelajaran}
-- Jenis Asesmen: ${data.jenis_asesmen}
+- Praktik Pedagogis: ${data.praktik_pedagogis || data.model_pembelajaran || "Tidak ditentukan."}
+- Metode / Teknik Pendukung: ${data.metode_pembelajaran || "Tidak ditentukan."}
+- Pendekatan Pembelajaran: ${data.pendekatan_pembelajaran || "Pembelajaran Mendalam"}
+- Prinsip Pembelajaran Mendalam: ${data.prinsip_pembelajaran_mendalam || "Berkesadaran, Bermakna, Menggembirakan"}
+- Pengalaman Belajar: ${data.pengalaman_belajar || "Memahami, Mengaplikasi, Merefleksi"}
+- Kemitraan Pembelajaran: ${data.kemitraan_pembelajaran || "Tidak ditentukan."}
+- Lingkungan Pembelajaran: ${data.lingkungan_pembelajaran || "Tidak ditentukan."}
+- Pemanfaatan Digital: ${data.pemanfaatan_digital || "Tidak ditentukan."}
+- Asesmen Awal: ${data.asesmen_awal || "Diagnostik"}
+- Asesmen Proses: ${data.asesmen_proses || "Formatif"}
+- Asesmen Akhir: ${data.asesmen_akhir || "Sumatif"}
 
 ${referenceContext}
 
@@ -162,16 +171,17 @@ ${structure}
 
 ATURAN KUALITAS:
 1. Gunakan Markdown murni. Jangan gunakan blok kode dan jangan menghasilkan HTML.
-2. Gunakan heading Markdown yang konsisten: # untuk judul besar, ## untuk bagian utama, ###/#### untuk subbagian.
+2. Gunakan heading Markdown yang konsisten.
 3. Pastikan kegiatan pembelajaran realistis terhadap alokasi waktu yang diberikan.
-4. Selaraskan tujuan, kegiatan, dan asesmen dengan CP, materi, fase, model, dan pendekatan pembelajaran.
-5. Jangan mengarang regulasi, nomor dokumen, URL, ISBN, penulis, atau sumber bibliografi.
-6. Jika data pengguna tidak menyediakan detail tertentu, tulis secara masuk akal tanpa membuat klaim faktual spesifik yang tidak didukung.
-7. Jangan membuat daftar pustaka atau sumber referensi sendiri. Aplikasi akan menambahkan sumber yang diberikan pengguna.
-8. Pastikan seluruh bagian yang diminta oleh struktur memiliki isi yang substantif, bukan sekadar satu kalimat generik.
-9. Untuk Kegiatan Pembelajaran, gunakan tabel Markdown jika struktur default meminta tabel.
-10. Hasil akhir harus siap dibaca dan diekspor sebagai dokumen pembelajaran.
-`;
+4. Selaraskan tujuan, kegiatan, dan asesmen dengan CP, materi, fase, praktik pedagogis, pendekatan, dan prinsip Pembelajaran Mendalam.
+5. Praktik pedagogis boleh memuat model/strategi/metode yang dipilih guru; jangan membuat ketiganya seolah-olah kategori kebijakan yang wajib terpisah.
+6. Jangan memaksa semua komponen opsional menjadi isian manual jika pengguna tidak mengisinya. AI boleh mengembangkan bagian opsional secara kontekstual.
+7. Jangan mengarang regulasi, nomor dokumen, URL, ISBN, penulis, atau sumber bibliografi.
+8. Jika pengguna memberikan sumber referensi, gunakan sumber tersebut sebagai konteks dan nyatakan hanya informasi yang didukung sumber.
+9. Jangan membuat daftar pustaka sendiri. Aplikasi akan menambahkan sumber yang benar-benar diberikan pengguna.
+10. Untuk kegiatan pembelajaran, tampilkan hubungan yang jelas antara memahami, mengaplikasi, dan merefleksi bila relevan.
+11. Asesmen harus dibedakan menjadi awal, proses, dan akhir sesuai input pengguna.
+12. Hasil akhir harus substantif, realistis, dan siap diekspor sebagai dokumen pembelajaran.`;
 }
 
 async function waitForFileReady(ai: GoogleGenAI, name: string): Promise<void> {
@@ -229,9 +239,12 @@ app.post("/api/generate", async (c) => {
       "capaian_pembelajaran",
       "materi_pembelajaran",
       "alokasi_waktu",
-      "model_pembelajaran",
+      "praktik_pedagogis",
+      "metode_pembelajaran",
       "pendekatan_pembelajaran",
-      "jenis_asesmen",
+      "asesmen_awal",
+      "asesmen_proses",
+      "asesmen_akhir",
     ];
 
     const missing = requiredFields.filter((field) => !data[field]);
