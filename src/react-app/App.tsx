@@ -435,28 +435,69 @@ function GeneratorPage() {
           <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
             <SectionTitle number="3" title="Desain Pembelajaran" />
             <div className="mb-5 grid grid-cols-1 gap-3.5 md:grid-cols-2">
-              <TextArea
+              <SelectOrCustomInput
                 label="Model Pembelajaran"
                 value={form.model_pembelajaran}
                 onChange={(v) => update("model_pembelajaran", v)}
-                placeholder={"Isi model pembelajaran yang digunakan guru.\nContoh: Project-Based Learning, Problem-Based Learning, Cooperative Learning."}
-                hint="Boleh lebih dari satu model. Pisahkan dengan koma atau baris baru."
+                options={[
+                  "Project-Based Learning (PjBL)",
+                  "Problem-Based Learning (PBL)",
+                  "Discovery Learning",
+                  "Inquiry Learning",
+                  "Cooperative Learning",
+                  "Collaborative Learning",
+                  "Contextual Teaching and Learning (CTL)",
+                  "Direct Instruction",
+                  "Flipped Classroom",
+                  "Blended Learning",
+                ]}
+                placeholder="Pilih model pembelajaran"
+                customLabel="Lainnya / Isi Sendiri"
+                customPlaceholder="Contoh: model pembelajaran yang digunakan..."
                 required
               />
-              <TextArea
+              <SelectOrCustomInput
                 label="Pendekatan Pembelajaran"
                 value={form.pendekatan_pembelajaran}
                 onChange={(v) => update("pendekatan_pembelajaran", v)}
-                placeholder={"Isi pendekatan yang digunakan guru.\nContoh: Pembelajaran Mendalam, Diferensiasi, Teaching at the Right Level."}
-                hint="Boleh lebih dari satu pendekatan."
+                options={[
+                  "Pembelajaran Mendalam (Deep Learning)",
+                  "Pembelajaran Berdiferensiasi (Differentiated Instruction)",
+                  "Teaching at the Right Level (TaRL)",
+                  "Pendekatan Saintifik",
+                  "Pendekatan Kontekstual",
+                  "Culturally Responsive Teaching (CRT)",
+                  "Pembelajaran Berbasis Masalah",
+                  "Pembelajaran Berbasis Proyek",
+                ]}
+                placeholder="Pilih pendekatan pembelajaran"
+                customLabel="Lainnya / Isi Sendiri"
+                customPlaceholder="Contoh: pendekatan pembelajaran yang digunakan..."
                 required
               />
-              <TextArea
+              <SelectOrCustomInput
                 label="Asesmen yang Digunakan"
                 value={form.jenis_asesmen}
                 onChange={(v) => update("jenis_asesmen", v)}
-                placeholder={"Isi jenis/teknik/instrumen asesmen.\nContoh: diagnostik, formatif, sumatif, observasi, proyek, presentasi."}
-                hint="Boleh diisi dengan beberapa jenis, teknik, atau bentuk asesmen."
+                options={[
+                  "Diagnostik, Formatif, dan Sumatif",
+                  "Asesmen of Learning",
+                  "Asesmen for Learning",
+                  "Asesmen as Learning",
+                  "Observasi",
+                  "Tes Tertulis",
+                  "Tes Lisan",
+                  "Kinerja / Praktik",
+                  "Proyek",
+                  "Produk",
+                  "Portofolio",
+                  "Presentasi",
+                  "Self Assessment",
+                  "Peer Assessment",
+                ]}
+                placeholder="Pilih jenis asesmen"
+                customLabel="Lainnya / Isi Sendiri"
+                customPlaceholder="Contoh: observasi + proyek + presentasi..."
                 required
                 fullWidth
               />
@@ -583,6 +624,92 @@ function TextArea({
         className="w-full rounded-lg border border-slate-300 px-3 py-2.5 leading-relaxed outline-none transition-shadow placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
       />
       {hint && <p className="mt-1 text-xs leading-relaxed text-slate-400">{hint}</p>}
+    </div>
+  );
+}
+
+function SelectOrCustomInput({
+  label,
+  value,
+  onChange,
+  options,
+  placeholder,
+  customLabel = "Lainnya / Isi Sendiri",
+  customPlaceholder = "Isi pilihan sendiri...",
+  fullWidth = false,
+  required = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: string[];
+  placeholder: string;
+  customLabel?: string;
+  customPlaceholder?: string;
+  fullWidth?: boolean;
+  required?: boolean;
+}) {
+  const isStandardValue = options.includes(value);
+  const [mode, setMode] = useState<"preset" | "custom">(isStandardValue ? "preset" : value ? "custom" : "preset");
+  const [customValue, setCustomValue] = useState(isStandardValue ? "" : value);
+
+  useEffect(() => {
+    if (options.includes(value)) {
+      setMode("preset");
+      setCustomValue("");
+    } else if (value) {
+      setMode("custom");
+      setCustomValue(value);
+    }
+  }, [value, options]);
+
+  const handleSelect = (nextValue: string) => {
+    if (nextValue === "__custom__") {
+      setMode("custom");
+      setCustomValue(customValue || "");
+      onChange(customValue || "");
+      return;
+    }
+
+    setMode("preset");
+    setCustomValue("");
+    onChange(nextValue);
+  };
+
+  return (
+    <div className={fullWidth ? "md:col-span-2" : ""}>
+      <label className="mb-1.5 block text-sm font-semibold text-slate-700">{label}</label>
+
+      <select
+        value={mode === "custom" ? "__custom__" : value}
+        onChange={(e) => handleSelect(e.target.value)}
+        required={required && mode === "preset"}
+        className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none transition-shadow focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+      >
+        <option value="" disabled>{placeholder}</option>
+        {options.map((option) => (
+          <option key={option} value={option}>{option}</option>
+        ))}
+        <option value="__custom__">{customLabel}</option>
+      </select>
+
+      {mode === "custom" && (
+        <div className="mt-2">
+          <input
+            type="text"
+            value={customValue}
+            onChange={(e) => {
+              const nextValue = e.target.value;
+              setCustomValue(nextValue);
+              onChange(nextValue);
+            }}
+            placeholder={customPlaceholder}
+            required={required}
+            className="w-full rounded-lg border border-blue-200 bg-blue-50/50 px-3 py-2 outline-none transition-shadow focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+          />
+          <p className="mt-1 text-xs text-slate-400">Masukkan pilihan guru yang belum tersedia di daftar.</p>
+        </div>
+      )}
     </div>
   );
 }
