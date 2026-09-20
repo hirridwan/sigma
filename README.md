@@ -1,91 +1,43 @@
-# React + Vite + Hono + Cloudflare Workers
+# SIGMA - file migrasi React + Hono + Cloudflare
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/templates/tree/main/vite-react-template)
+File ini adalah migrasi dari versi HTML lama SIGMA ke struktur React/Vite + Hono/Cloudflare Worker.
 
-This template provides a minimal setup for building a React application with TypeScript and Vite, designed to run on Cloudflare Workers. It features hot module replacement, ESLint integration, and the flexibility of Workers deployments.
+## File yang disalin
 
-![React + TypeScript + Vite + Cloudflare Workers](https://imagedelivery.net/wSMYJvS3Xw-n339CbDyDIA/fc7b4b62-442b-4769-641b-ad4422d74300/public)
+- `index.html`
+- `src/react-app/main.tsx`
+- `src/react-app/App.tsx`
+- `src/react-app/index.css`
+- `src/react-app/vite-env.d.ts`
+- `src/worker/index.ts`
 
-<!-- dash-content-start -->
+## Dependensi tambahan
 
-🚀 Supercharge your web development with this powerful stack:
-
-- [**React**](https://react.dev/) - A modern UI library for building interactive interfaces
-- [**Vite**](https://vite.dev/) - Lightning-fast build tooling and development server
-- [**Hono**](https://hono.dev/) - Ultralight, modern backend framework
-- [**Cloudflare Workers**](https://developers.cloudflare.com/workers/) - Edge computing platform for global deployment
-
-### ✨ Key Features
-
-- 🔥 Hot Module Replacement (HMR) for rapid development
-- 📦 TypeScript support out of the box
-- 🛠️ ESLint configuration included
-- ⚡ Zero-config deployment to Cloudflare's global network
-- 🎯 API routes with Hono's elegant routing
-- 🔄 Full-stack development setup
-- 🔎 Built-in Observability to monitor your Worker
-
-Get started in minutes with local development or deploy directly via the Cloudflare dashboard. Perfect for building modern, performant web applications at the edge.
-
-<!-- dash-content-end -->
-
-## Getting Started
-
-To start a new project with this template, run:
+Di project SIGMA yang sudah dibuat dari template Cloudflare, jalankan:
 
 ```bash
-npm create cloudflare@latest -- --template=cloudflare/templates/vite-react-template
+npm install marked dompurify html2pdf.js
 ```
 
-A live deployment of this template is available at:
-[https://react-vite-template.templates.workers.dev](https://react-vite-template.templates.workers.dev)
+## API key
 
-## Development
+Tidak ada API key di source code. Worker membaca:
 
-Install dependencies:
+```ts
+c.env.GEMINI_API_KEY
+```
+
+Gunakan Cloudflare Secret untuk production:
 
 ```bash
-npm install
+npx wrangler secret put GEMINI_API_KEY
 ```
 
-Start the development server with:
+## Endpoint
 
-```bash
-npm run dev
-```
+- `GET /api/` - health check
+- `POST /api/generate` - generate modul ajar dengan Gemini
 
-Your application will be available at [http://localhost:5173](http://localhost:5173).
+## Catatan
 
-## Production
-
-Build your project for production:
-
-```bash
-npm run build
-```
-
-Preview your build locally:
-
-```bash
-npm run preview
-```
-
-Deploy your project to Cloudflare Workers:
-
-```bash
-npm run build && npm run deploy
-```
-
-Monitor your workers:
-
-```bash
-npx wrangler tail
-```
-
-## Additional Resources
-
-- [Cloudflare Workers Documentation](https://developers.cloudflare.com/workers/)
-- [Vite Documentation](https://vitejs.dev/guide/)
-- [React Documentation](https://reactjs.org/)
-- [Hono Documentation](https://hono.dev/)
-"# sigma" 
+Upload PDF/DOC pada UI dipertahankan dari versi lama sebagai input tampilan, tetapi isi file belum diparsing oleh backend. Backend lama juga belum memproses isi file tersebut.
