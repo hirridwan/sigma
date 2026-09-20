@@ -238,7 +238,7 @@ function GeneratorPage() {
 
   const renderedResult = useMemo(() => {
     if (!resultMarkdown) return "";
-    const markdownHtml = marked.parse(resultMarkdown);
+    const markdownHtml = marked.parse(resultMarkdown, { async: false });
     return DOMPurify.sanitize(markdownHtml);
   }, [resultMarkdown]);
 
