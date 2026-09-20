@@ -168,7 +168,7 @@ function HomePage() {
           <div className="space-y-4 text-left">
             <span className="inline-block rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 shadow-sm sm:text-sm">Didukung oleh Artificial Intelligence</span>
             <h1 className="text-3xl font-extrabold leading-tight tracking-tight text-slate-900 sm:text-4xl md:text-[2.7rem] lg:text-5xl">Buat Modul Ajar Terstruktur Hanya dalam <span className="mt-1 block text-blue-600">Hitungan Detik</span></h1>
-            <p className="max-w-xl text-sm leading-relaxed text-slate-600 sm:text-base md:text-lg">Permudah penyusunan perangkat pembelajaran Kurikulum Merdeka secara otomatis, rapi, dan siap diunduh dalam format Word atau PDF.</p>
+            <p className="max-w-xl text-sm leading-relaxed text-slate-600 sm:text-base md:text-lg">Permudah penyusunan perangkat pembelajaran Kurikulum Merdeka secara otomatis, rapi, dan siap diunduh dalam format Word.</p>
             <div className="pt-2">
               <button type="button" onClick={() => navigate("/modul-ajar")} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-blue-600/20 transition hover:-translate-y-0.5 hover:bg-blue-700">Mulai Buat Modul Sekarang →</button>
             </div>
@@ -178,7 +178,7 @@ function HomePage() {
             <Feature icon="⚡" title="Instan & Cepat" description="Cukup isi parameter materi, draf langsung selesai." />
             <Feature icon="📝" title="Format Standar" description="Struktur modul konsisten dan dapat dipilih sesuai kebutuhan." />
             <Feature icon="📚" title="Berbasis Referensi" description="Gunakan URL atau upload PDF/DOCX sebagai bahan acuan." />
-            <Feature icon="💾" title="Ekspor Mudah" description="Unduh hasil dalam format Word atau PDF." />
+            <Feature icon="💾" title="Ekspor Mudah" description="Unduh hasil modul dalam format Word." />
           </div>
         </div>
       </main>
@@ -376,26 +376,6 @@ function GeneratorPage() {
     localStorage.removeItem(DRAFT_KEY);
   }
 
-  async function downloadPdf() {
-    const element = document.getElementById("hasil-content");
-    if (!element) {
-      setError("Konten modul belum tersedia untuk diekspor.");
-      return;
-    }
-
-    try {
-      await html2pdf().set({
-        margin: [40, 30, 30, 40],
-        filename: `Modul-Ajar-${slugify(form.mata_pelajaran || "SIGMA")}.pdf`,
-        image: { type: "jpeg", quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, logging: false },
-        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-      }).from(element).save();
-    } catch (err) {
-      setError(err instanceof Error ? `Gagal membuat PDF: ${err.message}` : "Gagal membuat PDF.");
-    }
-  }
-
   function downloadWord() {
     const element = document.getElementById("hasil-content");
     if (!element) {
@@ -417,27 +397,6 @@ function GeneratorPage() {
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (err) {
       setError(err instanceof Error ? `Gagal membuat Word: ${err.message}` : "Gagal membuat Word.");
-    }
-  }
-
-  async function copyMarkdown() {
-    if (!resultMarkdown) return;
-
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(resultMarkdown);
-      } else {
-        const textarea = document.createElement("textarea");
-        textarea.value = resultMarkdown;
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        textarea.remove();
-      }
-    } catch (err) {
-      setError(err instanceof Error ? `Gagal menyalin Markdown: ${err.message}` : "Gagal menyalin Markdown.");
     }
   }
 
@@ -670,12 +629,10 @@ function GeneratorPage() {
           <section id="hasil-container" className="mb-8 flex min-h-[360px] flex-col rounded-xl border border-blue-100 bg-white shadow-lg">
             <div className="relative z-40 flex flex-col items-start justify-between gap-3 rounded-t-xl border-b border-slate-100 bg-gradient-to-r from-blue-50 to-white p-4 lg:flex-row lg:items-center">
               <div><h2 className="flex items-center gap-2 text-lg font-extrabold text-blue-900">📄 Pratinjau Modul</h2><p className="mt-1 text-xs text-slate-500">Hasil dapat diedit dengan mengubah input lalu Regenerate.</p></div>
-              <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3 lg:w-auto">
+              <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-3 lg:w-auto">
                 <button type="button" onClick={editInput} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 sm:text-sm">Edit Input</button>
                 <button type="button" onClick={() => void generateModule(undefined, true)} disabled={isRegenerating} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-60 sm:text-sm">Regenerate</button>
-                <button type="button" onClick={copyMarkdown} className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-bold text-white hover:bg-slate-900 sm:text-sm">Salin Markdown</button>
                 <button type="button" onClick={downloadWord} className="rounded-lg bg-green-600 px-3 py-2 text-xs font-bold text-white hover:bg-green-700 sm:text-sm">Word</button>
-                <button type="button" onClick={downloadPdf} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 sm:text-sm">PDF</button>
               </div>
             </div>
             <div id="hasil-content" className="document-preview max-w-none rounded-b-xl bg-white p-6 sm:p-8 md:p-10">
