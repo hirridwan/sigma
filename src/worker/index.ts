@@ -26,9 +26,6 @@ app.get("/api/", (c) => {
   return c.json({ success: true, message: "SIGMA API is running" });
 });
 
-function text(value: FormDataEntryValue | null): string {
-  return typeof value === "string" ? value.trim() : "";
-}
 
 function inferMimeType(fileName: string, provided: string): string {
   if (provided) return provided;
