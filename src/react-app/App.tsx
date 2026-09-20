@@ -384,7 +384,217 @@ function GeneratorPage() {
     }
 
     try {
-      const html = `<!DOCTYPE html><html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset='utf-8'><title>Modul Ajar SIGMA</title><style>@page WordSection1{size:595.3pt 841.9pt;margin:113.4pt 85.05pt 85.05pt 113.4pt}div.WordSection1{page:WordSection1}body{font-family:'Times New Roman',serif;font-size:12pt;line-height:1.5;color:#000}h1{text-align:center;text-transform:uppercase;font-size:16pt;color:${colorHex};border-bottom:1px solid ${colorHex};padding-bottom:10px;margin-bottom:20px}h2{font-size:14pt;margin-top:20px;color:${colorHex};text-transform:uppercase}h3,h4{font-size:12pt;margin-top:15px}p,li{text-align:justify;line-height:1.5}table{border-collapse:collapse;width:100%;margin-top:10px;margin-bottom:10px;page-break-inside:auto}tr{page-break-inside:avoid;page-break-after:auto}th,td{border:1px solid #000;padding:8px;vertical-align:top;font-size:11pt}.cover-page{page-break-after:always;text-align:center}</style></head><body><div class='WordSection1'>${element.innerHTML}</div></body></html>`;
+      // Clone agar perbaikan format Word tidak mengubah tampilan preview di halaman.
+      const exportElement = element.cloneNode(true) as HTMLElement;
+
+      // Hapus elemen dekoratif yang tidak diperlukan dalam dokumen Word.
+      exportElement.querySelectorAll("hr").forEach((node) => node.remove());
+
+      // Pastikan cover menjadi halaman 1 sendiri.
+      const cover = exportElement.querySelector(".cover-page") as HTMLElement | null;
+      if (cover) {
+        cover.style.pageBreakAfter = "always";
+        cover.style.breakAfter = "page";
+        cover.style.margin = "0";
+        cover.style.padding = "0";
+        cover.style.border = "0";
+        cover.style.minHeight = "230mm";
+        cover.style.display = "flex";
+        cover.style.flexDirection = "column";
+        cover.style.justifyContent = "center";
+        cover.style.alignItems = "center";
+
+        // Hilangkan garis/pembatas dekoratif yang ada pada cover.
+        cover.querySelectorAll<HTMLElement>("*").forEach((node) => {
+          node.style.borderTop = "0";
+          node.style.borderBottom = "0";
+          node.style.borderLeft = "0";
+          node.style.borderRight = "0";
+          node.style.boxShadow = "none";
+        });
+
+        const moduleRoot = cover.nextElementSibling as HTMLElement | null;
+        if (moduleRoot) {
+          moduleRoot.style.pageBreakBefore = "always";
+          moduleRoot.style.breakBefore = "page";
+        }
+      }
+
+      // Hilangkan garis dekoratif pada heading, tetapi pertahankan border tabel.
+      exportElement.querySelectorAll<HTMLElement>("h1, h2, h3, h4").forEach((heading) => {
+        heading.style.borderTop = "0";
+        heading.style.borderBottom = "0";
+        heading.style.borderLeft = "0";
+        heading.style.borderRight = "0";
+        heading.style.boxShadow = "none";
+        heading.style.marginTop = "0";
+        heading.style.marginBottom = "0";
+        heading.style.paddingTop = "0";
+        heading.style.paddingBottom = "0";
+      });
+
+      const html = `<!DOCTYPE html>
+<html xmlns:o='urn:schemas-microsoft-com:office:office'
+      xmlns:w='urn:schemas-microsoft-com:office:word'
+      xmlns='http://www.w3.org/TR/REC-html40'>
+<head>
+<meta charset='utf-8'>
+<title>Modul Ajar SIGMA</title>
+<style>
+  @page WordSection1 {
+    size: 595.3pt 841.9pt;
+    margin: 70.87pt 56.69pt 70.87pt 85.04pt;
+  }
+
+  div.WordSection1 {
+    page: WordSection1;
+  }
+
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body {
+    font-family: 'Times New Roman', Times, serif;
+    font-size: 12pt;
+    line-height: 1.5;
+    color: #000;
+  }
+
+  *,
+  p,
+  div,
+  li,
+  ul,
+  ol,
+  h1,
+  h2,
+  h3,
+  h4,
+  table,
+  tbody,
+  thead,
+  tr,
+  td,
+  th {
+    box-sizing: border-box;
+  }
+
+  p,
+  div,
+  li,
+  ul,
+  ol {
+    margin: 0 !important;
+    padding: 0 !important;
+    text-indent: 0 !important;
+    mso-margin-top-alt: 0 !important;
+    mso-margin-bottom-alt: 0 !important;
+    line-height: 1.5;
+  }
+
+  h1,
+  h2 {
+    font-family: 'Times New Roman', Times, serif !important;
+    font-size: 14pt !important;
+    font-weight: bold;
+    line-height: 1.5;
+    color: ${colorHex};
+    text-transform: uppercase;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    text-decoration: none !important;
+  }
+
+  h3,
+  h4 {
+    font-family: 'Times New Roman', Times, serif !important;
+    font-size: 12pt !important;
+    font-weight: bold;
+    line-height: 1.5;
+    color: ${colorHex};
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    text-decoration: none !important;
+  }
+
+  .cover-page {
+    page-break-after: always !important;
+    break-after: page !important;
+    text-align: center;
+    margin: 0 !important;
+    padding: 0 !important;
+    min-height: 230mm;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .cover-page h1 {
+    font-size: 14pt !important;
+    border: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .cover-page,
+  .cover-page * {
+    font-family: 'Times New Roman', Times, serif !important;
+  }
+
+  .cover-page p,
+  .cover-page div {
+    font-size: 12pt !important;
+    line-height: 1.5;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .document-preview {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  ul,
+  ol {
+    padding-left: 0 !important;
+    margin-left: 0 !important;
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 0 !important;
+    padding: 0 !important;
+    page-break-inside: auto;
+  }
+
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+
+  th,
+  td {
+    border: 1px solid #000;
+    padding: 6pt;
+    vertical-align: top;
+    font-family: 'Times New Roman', Times, serif !important;
+    font-size: 12pt !important;
+    line-height: 1.5;
+    margin: 0 !important;
+  }
+</style>
+</head>
+<body>
+  <div class='WordSection1'>${exportElement.innerHTML}</div>
+</body>
+</html>`;
+
       const blob = new Blob(["\ufeff", html], { type: "application/msword" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
