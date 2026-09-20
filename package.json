@@ -14,7 +14,10 @@
   "dependencies": {
     "@google/genai": "^2.23.0",
     "@tailwindcss/vite": "^4.3.3",
+    "dompurify": "^3.4.15",
     "hono": "^4.13.8",
+    "html2pdf.js": "^0.14.0",
+    "marked": "^18.0.13",
     "react": "19.2.1",
     "react-dom": "19.2.1",
     "tailwindcss": "^4.3.3"
