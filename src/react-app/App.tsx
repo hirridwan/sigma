@@ -408,7 +408,10 @@ function GeneratorPage() {
         replacement.style.fontWeight = "bold";
         replacement.style.lineHeight = "150%";
         replacement.style.fontSize = heading.tagName === "H1" || heading.tagName === "H2" ? "14pt" : "12pt";
-        exportElement.replaceChild(replacement, heading);
+        // Ganti heading pada parent-nya, bukan pada exportElement langsung.
+        // Heading bisa berada di dalam wrapper/div, sehingga replaceChild pada
+        // exportElement menyebabkan error jika heading bukan direct child.
+        heading.replaceWith(replacement);
       });
 
       // Ubah list menjadi paragraf tanpa indent Word bawaan.
