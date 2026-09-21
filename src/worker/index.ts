@@ -276,8 +276,14 @@ app.post("/api/payment/create", async (c) => {
     }
 
     const orderId = `SIGMA-${formHash.slice(0, 16)}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    const origin = new URL(c.req.url).origin;
+    const callbackUrl = new URL("/api/payment/callback", origin);
+    callbackUrl.searchParams.set("order_id", orderId);
+    callbackUrl.searchParams.set("form_hash", formHash);
+
     const paymentUrl = new URL(`https://app.pakasir.com/pay/${PAKASIR_SLUG}/${PAKASIR_AMOUNT}`);
     paymentUrl.searchParams.set("order_id", orderId);
+    paymentUrl.searchParams.set("redirect", callbackUrl.toString());
 
     return c.json({
       success: true,
@@ -288,6 +294,82 @@ app.post("/api/payment/create", async (c) => {
   } catch (error) {
     console.error("SIGMA /api/payment/create error", error);
     return c.json({ success: false, message: "Gagal membuat transaksi pembayaran." }, 500);
+  }
+});
+
+app.get("/api/payment/callback", async (c) => {
+  const orderId = c.req.query("order_id")?.trim() || "";
+  const formHash = c.req.query("form_hash")?.trim().toLowerCase() || "";
+  const origin = new URL(c.req.url).origin;
+
+  const baseHtml = (title: string, message: string, success: boolean) => `<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SIGMA - ${success ? "Pembayaran Berhasil" : "Verifikasi Pembayaran"}</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f8fafc; color: #0f172a; font-family: Arial, sans-serif; }
+    .card { width: min(92vw, 560px); box-sizing: border-box; padding: 28px; border-radius: 18px; background: white; border: 1px solid #e2e8f0; box-shadow: 0 20px 40px rgba(15,23,42,.08); text-align: center; }
+    .title { margin: 0 0 8px; font-size: 22px; font-weight: 800; color: ${success ? "#047857" : "#1e3a8a"}; }
+    .message { margin: 0; color: #475569; line-height: 1.6; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1 class="title">${title}</h1>
+    <p class="message">${message}</p>
+  </div>
+  <script>
+    const payload = ${JSON.stringify({
+      source: "sigma-pakasir",
+      type: success ? "SIGMA_PAYMENT_SUCCESS" : "SIGMA_PAYMENT_ERROR",
+      orderId,
+      formHash,
+      message,
+    })};
+    const targetOrigin = ${JSON.stringify(origin)};
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage(payload, targetOrigin);
+    } else if (${JSON.stringify(success)}) {
+      window.location.replace(${JSON.stringify(`/modul-ajar?payment=success&order_id=${encodeURIComponent(orderId)}&form_hash=${encodeURIComponent(formHash)}`)});
+    }
+  </script>
+</body>
+</html>`;
+
+  if (!orderId || !/^[a-f0-9]{64}$/.test(formHash)) {
+    return c.html(baseHtml("Verifikasi pembayaran gagal", "Data transaksi tidak lengkap.", false), 400);
+  }
+
+  if (!orderId.startsWith(`SIGMA-${formHash.slice(0, 16)}-`)) {
+    return c.html(baseHtml("Verifikasi pembayaran gagal", "Transaksi tidak cocok dengan modul ini.", false), 403);
+  }
+
+  try {
+    const paid = await verifyPakasirTransaction(c, orderId);
+    if (!paid) {
+      return c.html(baseHtml("Pembayaran belum terverifikasi", "Silakan kembali ke SIGMA dan tunggu sampai status pembayaran selesai.", false), 402);
+    }
+
+    return c.html(
+      baseHtml(
+        "Pembayaran berhasil",
+        "SIGMA sedang menyiapkan modul ajar dan akan mengunduh file Word secara otomatis.",
+        true,
+      ),
+      200,
+    );
+  } catch (error) {
+    console.error("SIGMA /api/payment/callback error", error);
+    return c.html(
+      baseHtml(
+        "Verifikasi pembayaran gagal",
+        error instanceof Error ? error.message : "Terjadi kesalahan saat memverifikasi pembayaran.",
+        false,
+      ),
+      500,
+    );
   }
 });
 

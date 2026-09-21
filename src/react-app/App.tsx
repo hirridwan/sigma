@@ -289,7 +289,7 @@ function GeneratorPage() {
         if (payment.orderId && payment.formHash) {
           setPaymentVerifiedOrderId(payment.orderId);
           setPaymentVerifiedFormHash(payment.formHash);
-          setPaymentMessage("Pembayaran berhasil diverifikasi. Klik Word untuk mengunduh modul lengkap.");
+          setPaymentMessage("Pembayaran berhasil diverifikasi. Modul lengkap sedang disiapkan untuk diunduh.");
         }
       } catch {
         // Ignore malformed storage events.
@@ -560,6 +560,43 @@ a { color:#000 !important; text-decoration:none !important; }
       window.clearInterval(interval);
     };
   }, [showPaymentModal, paymentOrderId, paymentFormHash]);
+
+  useEffect(() => {
+    const handlePaymentMessage = async (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const data = event.data as { source?: string; type?: string; orderId?: string; formHash?: string; message?: string } | null;
+      if (!data || data.source !== "sigma-pakasir" || data.type !== "SIGMA_PAYMENT_SUCCESS") return;
+      if (!paymentOrderId || !paymentFormHash) return;
+      if (data.orderId !== paymentOrderId || data.formHash !== paymentFormHash) return;
+
+      setPaymentChecking(true);
+      setPaymentMessage("Pembayaran berhasil. Menyiapkan modul lengkap dan mengunduh Word...");
+      setShowPaymentModal(false);
+      try {
+        setPaymentVerifiedOrderId(data.orderId);
+        setPaymentVerifiedFormHash(data.formHash);
+        localStorage.setItem(PAYMENT_RESULT_KEY, JSON.stringify({
+          orderId: data.orderId,
+          formHash: data.formHash,
+          verifiedAt: Date.now(),
+        }));
+        await loadPaidModule(data.orderId, data.formHash, true);
+        setPaymentOrderId("");
+        setPaymentFormHash("");
+        setPaymentUrl("");
+        window.setTimeout(() => {
+          navigate("/");
+        }, 1800);
+      } catch {
+        // Error already displayed by loadPaidModule.
+      } finally {
+        setPaymentChecking(false);
+      }
+    };
+
+    window.addEventListener("message", handlePaymentMessage);
+    return () => window.removeEventListener("message", handlePaymentMessage);
+  }, [paymentOrderId, paymentFormHash]);
 
   const update = <K extends keyof GeneratorForm>(key: K, value: GeneratorForm[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -1152,20 +1189,32 @@ function TemplateModal({ onClose }: { onClose: () => void }) {
 function PaymentModal({ paymentUrl, orderId, checking, onClose }: { paymentUrl: string; orderId: string; checking: boolean; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-3 backdrop-blur-sm sm:p-5">
-      <div className="flex max-h-[95vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-        <div className="flex items-center justify-between gap-4 border-b border-slate-200 bg-blue-50 px-4 py-3 sm:px-5">
-          <div>
-            <h3 className="text-base font-extrabold text-blue-900 sm:text-lg">Pembayaran SIGMA · Rp5.000</h3>
-            <p className="mt-0.5 text-xs text-slate-500">Order ID: {orderId}</p>
+      <div className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10">
+        <div className="flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 py-3 sm:px-5">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-700">Rp</span>
+              <div>
+                <h3 className="text-sm font-extrabold text-slate-900 sm:text-base">Pembayaran SIGMA</h3>
+                <p className="text-xs font-semibold text-blue-700">Rp5.000 · Sandbox</p>
+              </div>
+            </div>
+            <p className="mt-1 truncate text-[11px] text-slate-400">Order ID: {orderId}</p>
           </div>
-          <button type="button" onClick={onClose} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-slate-500 hover:text-red-500" aria-label="Tutup pembayaran">✕</button>
+          <button type="button" onClick={onClose} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-slate-500 hover:border-red-200 hover:text-red-500" aria-label="Tutup pembayaran">✕</button>
         </div>
-        <div className="flex items-center justify-between gap-3 border-b border-slate-100 bg-white px-4 py-2.5 sm:px-5">
-          <p className="text-xs font-medium text-slate-600">{checking ? "Memverifikasi pembayaran secara otomatis..." : "Selesaikan pembayaran di bawah. Tidak perlu membuka tab baru."}</p>
-          <span className="shrink-0 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700">Sandbox</span>
+        <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-4 py-2.5 sm:px-5">
+          <span className="h-2 w-2 rounded-full bg-emerald-500" />
+          <p className="text-xs font-medium text-slate-600">
+            {checking ? "Pembayaran terdeteksi. Menyiapkan modul dan mengunduh Word..." : "Selesaikan pembayaran di bawah. Setelah berhasil, Word akan terunduh otomatis dan kamu akan kembali ke beranda."}
+          </p>
         </div>
-        <div className="min-h-0 flex-1 overflow-hidden bg-slate-100">
-          <iframe src={paymentUrl} title="Pembayaran Pakasir" className="h-[72vh] w-full border-0 bg-white sm:h-[75vh]" />
+        <div className="min-h-0 flex-1 overflow-hidden bg-slate-100 p-1">
+          <iframe
+            src={paymentUrl}
+            title="Pembayaran Pakasir"
+            className="h-[68vh] w-full rounded-xl border border-slate-200 bg-white sm:h-[70vh]"
+          />
         </div>
       </div>
     </div>
