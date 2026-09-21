@@ -979,7 +979,7 @@ function GeneratorPage() {
             <div className="mt-3.5 rounded-lg border border-slate-200 bg-slate-50 p-3.5">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <h3 className="flex items-center gap-2 text-sm font-bold text-slate-800">📚 Referensi Tambahan (Opsional)</h3>
-                <span className="text-xs text-slate-400">PDF / DOCX / TXT</span>
+                <span className="text-xs text-slate-400">PDF / DOCX</span>
               </div>
               <div>
                 <label className="mb-1.5 block text-xs font-semibold text-slate-500">Upload Referensi</label>
