@@ -7,6 +7,8 @@ import * as mammoth from "mammoth";
 const DRAFT_KEY = "sigma:generator-draft:v4";
 const WHATSAPP_NUMBER = "6285860565852";
 const MAX_REFERENCE_FILE_BYTES = 15 * 1024 * 1024;
+const PAYMENT_AMOUNT = 5000;
+const PAYMENT_RESULT_KEY = "sigma:payment:verified";
 const OFFICIAL_CP_REFERENCE_URL = "https://uploads.belajar.id/document/files/Kepka_BSKAP_No_01k17e8396ajn15j3hcw0k773b.pdf";
 
 const THEME_COLORS = {
@@ -119,6 +121,19 @@ function navigate(path: string) {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
+async function hashGeneratorForm(form: GeneratorForm): Promise<string> {
+  const normalized = JSON.stringify(
+    Object.keys(form)
+      .sort()
+      .reduce<Record<string, string>>((acc, key) => {
+        acc[key] = form[key as keyof GeneratorForm];
+        return acc;
+      }, {}),
+  );
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalized));
+  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function App() {
   const [path, setPath] = useState(window.location.pathname);
 
@@ -223,6 +238,17 @@ function GeneratorPage() {
   const [referenceFile, setReferenceFile] = useState<File | null>(null);
   const [referenceStatus, setReferenceStatus] = useState("");
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [paymentVerifiedOrderId, setPaymentVerifiedOrderId] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(PAYMENT_RESULT_KEY);
+      if (!saved) return "";
+      const parsed = JSON.parse(saved) as { orderId?: string };
+      return parsed.orderId || "";
+    } catch {
+      return "";
+    }
+  });
+  const [paymentMessage, setPaymentMessage] = useState("");
 
   const colorHex = THEME_COLORS[form.warna_tema];
 
@@ -239,6 +265,63 @@ function GeneratorPage() {
       // Ignore storage errors.
     }
   }, [form]);
+
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== PAYMENT_RESULT_KEY || !event.newValue) return;
+      try {
+        const payment = JSON.parse(event.newValue) as { orderId?: string; verifiedAt?: number };
+        if (payment.orderId) {
+          setPaymentVerifiedOrderId(payment.orderId);
+          setPaymentMessage("Pembayaran berhasil diverifikasi. Klik Word untuk mengunduh modul lengkap.");
+        }
+      } catch {
+        // Ignore malformed storage events.
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("payment") !== "success") return;
+
+    const orderId = params.get("order_id")?.trim();
+    if (!orderId) return;
+
+    let cancelled = false;
+
+    const verify = async () => {
+      setPaymentMessage("Memverifikasi pembayaran...");
+      try {
+        const response = await fetch(`/api/payment/verify?order_id=${encodeURIComponent(orderId)}`);
+        const result = await response.json().catch(() => null) as { success?: boolean; paid?: boolean; message?: string } | null;
+
+        if (cancelled) return;
+
+        if (!response.ok || !result?.success) {
+          throw new Error(result?.message || "Gagal memverifikasi pembayaran.");
+        }
+
+        if (result.paid) {
+          setPaymentVerifiedOrderId(orderId);
+          setPaymentMessage("Pembayaran berhasil diverifikasi. Kembali ke tab SIGMA sebelumnya, lalu klik Word.");
+          localStorage.setItem(PAYMENT_RESULT_KEY, JSON.stringify({ orderId, verifiedAt: Date.now() }));
+        } else {
+          setPaymentMessage("Pembayaran belum terverifikasi. Jika kamu baru saja membayar, tunggu beberapa saat lalu coba lagi.");
+        }
+      } catch (err) {
+        if (!cancelled) setPaymentMessage(err instanceof Error ? err.message : "Gagal memverifikasi pembayaran.");
+      } finally {
+        window.history.replaceState({}, "", "/modul-ajar");
+      }
+    };
+
+    void verify();
+    return () => { cancelled = true; };
+  }, []);
 
   const update = <K extends keyof GeneratorForm>(key: K, value: GeneratorForm[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -376,7 +459,37 @@ function GeneratorPage() {
     localStorage.removeItem(DRAFT_KEY);
   }
 
-  function downloadWord() {
+  async function downloadWord() {
+    setError("");
+
+    if (!paymentVerifiedOrderId) {
+      try {
+        setPaymentMessage(`Membuka pembayaran sebesar Rp${PAYMENT_AMOUNT.toLocaleString("id-ID")}...`);
+        const formHash = await hashGeneratorForm(form);
+        const response = await fetch("/api/payment/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ form_hash: formHash }),
+        });
+        const result = await response.json().catch(() => null) as { success?: boolean; payment_url?: string; message?: string } | null;
+
+        if (!response.ok || !result?.success || !result.payment_url) {
+          throw new Error(result?.message || "Gagal membuat transaksi pembayaran.");
+        }
+
+        const paymentWindow = window.open(result.payment_url, "_blank", "noopener,noreferrer");
+        if (!paymentWindow) {
+          window.location.assign(result.payment_url);
+          return;
+        }
+
+        setPaymentMessage("Halaman pembayaran dibuka di tab baru. Setelah selesai, kembali ke tab SIGMA ini.");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Gagal membuka pembayaran.");
+      }
+      return;
+    }
+
     const element = document.getElementById("hasil-content");
     if (!element) {
       setError("Konten modul belum tersedia untuk diekspor.");
@@ -384,304 +497,186 @@ function GeneratorPage() {
     }
 
     try {
-      const exportElement = element.cloneNode(true) as HTMLElement;
+      const payload = new FormData();
+      for (const [key, value] of Object.entries(form)) payload.append(key, value);
+      payload.append("model_pembelajaran", form.praktik_pedagogis);
+      payload.append("jenis_asesmen", [
+        `Awal: ${form.asesmen_awal}`,
+        `Proses: ${form.asesmen_proses}`,
+        `Akhir: ${form.asesmen_akhir}`,
+      ].join("; "));
+      payload.append("paid_download", "true");
+      payload.append("order_id", paymentVerifiedOrderId);
+      payload.append("form_hash", await hashGeneratorForm(form));
 
-      // Hapus elemen dekoratif yang tidak diperlukan di Word.
-      exportElement.querySelectorAll("hr").forEach((node) => node.remove());
+      if (referenceFile) {
+        payload.append("reference_file", referenceFile, referenceFile.name);
+        payload.append("reference_file_name", referenceFile.name);
 
-      // Mengubah heading HTML menjadi paragraf biasa agar Word tidak menerapkan
-      // style Heading bawaan (yang sering menambahkan garis, spacing, atau indent).
-      exportElement.querySelectorAll<HTMLElement>("h1, h2, h3, h4").forEach((heading) => {
-        const replacement = document.createElement("p");
-        replacement.className = heading.tagName === "H1" || heading.tagName === "H2"
-          ? "SigmaHeading14"
-          : "SigmaHeading12";
-        replacement.innerHTML = heading.innerHTML;
-        replacement.style.border = "0";
-        replacement.style.boxShadow = "none";
-        replacement.style.margin = "0";
-        replacement.style.padding = "0";
-        replacement.style.textIndent = "0";
-        replacement.style.textAlign = heading.style.textAlign || "";
-        replacement.style.color = colorHex;
-        replacement.style.fontFamily = "'Times New Roman', Times, serif";
-        replacement.style.fontWeight = "bold";
-        replacement.style.lineHeight = "150%";
-        replacement.style.fontSize = heading.tagName === "H1" || heading.tagName === "H2" ? "14pt" : "12pt";
-        // Ganti heading pada parent-nya, bukan pada exportElement langsung.
-        // Heading bisa berada di dalam wrapper/div, sehingga replaceChild pada
-        // exportElement menyebabkan error jika heading bukan direct child.
-        heading.replaceWith(replacement);
-      });
-
-      // Ubah list menjadi paragraf tanpa indent Word bawaan.
-      const normalizeList = (list: HTMLElement) => {
-        const fragment = document.createDocumentFragment();
-        const ordered = list.tagName.toLowerCase() === "ol";
-        let number = 1;
-
-        Array.from(list.children).forEach((child) => {
-          if (!(child instanceof HTMLElement) || child.tagName.toLowerCase() !== "li") return;
-
-          const li = child as HTMLElement;
-          const nestedLists = Array.from(li.children).filter(
-            (node) => node instanceof HTMLElement && ["ul", "ol"].includes(node.tagName.toLowerCase())
-          ) as HTMLElement[];
-
-          nestedLists.forEach((nested) => nested.remove());
-
-          const paragraph = document.createElement("p");
-          paragraph.className = "SigmaBody";
-          paragraph.style.margin = "0";
-          paragraph.style.padding = "0";
-          paragraph.style.textIndent = "0";
-          paragraph.style.lineHeight = "150%";
-          paragraph.style.fontFamily = "'Times New Roman', Times, serif";
-          paragraph.style.fontSize = "12pt";
-          paragraph.innerHTML = `${ordered ? `${number}.` : "•"} ${li.innerHTML}`;
-
-          fragment.appendChild(paragraph);
-
-          nestedLists.forEach((nested) => {
-            const nestedFragment = normalizeList(nested);
-            fragment.appendChild(nestedFragment);
-          });
-
-          number += 1;
-        });
-
-        return fragment;
-      };
-
-      exportElement.querySelectorAll<HTMLElement>("ul, ol").forEach((list) => {
-        // Lewati list yang sudah berada di dalam list lain karena akan diproses
-        // ketika parent <li> ditangani.
-        if (list.parentElement?.closest("ul, ol")) return;
-
-        const fragment = normalizeList(list);
-        list.replaceWith(fragment);
-      });
-
-      // Cover khusus halaman pertama.
-      const cover = exportElement.querySelector(".cover-page") as HTMLElement | null;
-      if (cover) {
-        cover.style.pageBreakAfter = "always";
-        cover.style.breakAfter = "page";
-        cover.style.margin = "0";
-        cover.style.padding = "0";
-        cover.style.border = "0";
-        cover.style.boxShadow = "none";
-        cover.style.minHeight = "230mm";
-        cover.style.display = "block";
-        cover.style.textAlign = "center";
-
-        cover.querySelectorAll<HTMLElement>("*").forEach((node) => {
-          node.style.borderTop = "0";
-          node.style.borderBottom = "0";
-          node.style.borderLeft = "0";
-          node.style.borderRight = "0";
-          node.style.boxShadow = "none";
-          node.style.marginLeft = "0";
-          node.style.marginRight = "0";
-          node.style.textIndent = "0";
-        });
-
-        const coverTitle = cover.querySelector("p.SigmaHeading14") as HTMLElement | null;
-        if (coverTitle) {
-          coverTitle.style.paddingTop = "60mm";
-          coverTitle.style.margin = "0";
-        } else {
-          const firstHeading = cover.querySelector("p") as HTMLElement | null;
-          if (firstHeading) {
-            firstHeading.style.paddingTop = "60mm";
-          }
+        if (referenceFile.name.toLowerCase().endsWith(".docx")) {
+          const arrayBuffer = await referenceFile.arrayBuffer();
+          const extraction = await mammoth.extractRawText({ arrayBuffer });
+          payload.append("reference_text", extraction.value.slice(0, 120000));
+        } else if (referenceFile.name.toLowerCase().endsWith(".txt")) {
+          payload.append("reference_text", (await referenceFile.text()).slice(0, 120000));
         }
       }
 
-      // Hilangkan seluruh border/shape pada elemen non-tabel.
-      exportElement.querySelectorAll<HTMLElement>("*").forEach((node) => {
-        if (node.closest("table")) return;
-        node.style.borderTop = node.classList.contains("cover-page") ? "0" : node.style.borderTop;
-        node.style.borderBottom = node.classList.contains("cover-page") ? "0" : node.style.borderBottom;
-        node.style.borderLeft = node.classList.contains("cover-page") ? "0" : node.style.borderLeft;
-        node.style.borderRight = node.classList.contains("cover-page") ? "0" : node.style.borderRight;
-        node.style.boxShadow = "none";
-      });
+      setPaymentMessage("Menyiapkan modul lengkap...");
+      const response = await fetch("/api/generate", { method: "POST", body: payload });
+      const result = await response.json().catch(() => null) as { success?: boolean; data?: string; message?: string } | null;
 
-      const html = `<!DOCTYPE html>
-<html xmlns:o='urn:schemas-microsoft-com:office:office'
-      xmlns:w='urn:schemas-microsoft-com:office:word'
-      xmlns='http://www.w3.org/TR/REC-html40'>
+      if (!response.ok || !result?.success || !result.data) {
+        throw new Error(result?.message || `Gagal menyiapkan modul (${response.status}).`);
+      }
+
+      setResultMarkdown(result.data);
+
+      window.setTimeout(() => {
+        const fullElement = document.getElementById("hasil-content");
+        if (!fullElement) {
+          setError("Konten modul lengkap belum siap untuk diekspor.");
+          return;
+        }
+
+        try {
+          const exportElement = fullElement.cloneNode(true) as HTMLElement;
+          exportElement.querySelectorAll("hr").forEach((node) => node.remove());
+
+          exportElement.querySelectorAll<HTMLElement>("h1, h2, h3, h4").forEach((heading) => {
+            const replacement = document.createElement("p");
+            replacement.className = heading.tagName === "H1" || heading.tagName === "H2" ? "SigmaHeading14" : "SigmaHeading12";
+            replacement.innerHTML = heading.innerHTML;
+            replacement.style.border = "0";
+            replacement.style.boxShadow = "none";
+            replacement.style.margin = "0";
+            replacement.style.padding = "0";
+            replacement.style.textIndent = "0";
+            replacement.style.textAlign = heading.style.textAlign || "";
+            replacement.style.color = colorHex;
+            replacement.style.fontFamily = "'Times New Roman', Times, serif";
+            replacement.style.fontWeight = "bold";
+            replacement.style.lineHeight = "150%";
+            replacement.style.fontSize = heading.tagName === "H1" || heading.tagName === "H2" ? "14pt" : "12pt";
+            heading.replaceWith(replacement);
+          });
+
+          const normalizeList = (list: HTMLElement): DocumentFragment => {
+            const fragment = document.createDocumentFragment();
+            const ordered = list.tagName.toLowerCase() === "ol";
+            let number = 1;
+
+            Array.from(list.children).forEach((child) => {
+              if (!(child instanceof HTMLElement) || child.tagName.toLowerCase() !== "li") return;
+              const li = child as HTMLElement;
+              const nestedLists = Array.from(li.children).filter(
+                (node) => node instanceof HTMLElement && ["ul", "ol"].includes(node.tagName.toLowerCase()),
+              ) as HTMLElement[];
+
+              nestedLists.forEach((nested) => nested.remove());
+
+              const paragraph = document.createElement("p");
+              paragraph.className = "SigmaBody";
+              paragraph.style.margin = "0";
+              paragraph.style.padding = "0";
+              paragraph.style.textIndent = "0";
+              paragraph.style.lineHeight = "150%";
+              paragraph.style.fontFamily = "'Times New Roman', Times, serif";
+              paragraph.style.fontSize = "12pt";
+              paragraph.innerHTML = `${ordered ? `${number}.` : "•"} ${li.innerHTML}`;
+              fragment.appendChild(paragraph);
+
+              nestedLists.forEach((nested) => fragment.appendChild(normalizeList(nested)));
+              number += 1;
+            });
+
+            return fragment;
+          };
+
+          exportElement.querySelectorAll<HTMLElement>("ul, ol").forEach((list) => {
+            if (list.parentElement?.closest("ul, ol")) return;
+            list.replaceWith(normalizeList(list));
+          });
+
+          const cover = exportElement.querySelector(".cover-page") as HTMLElement | null;
+          if (cover) {
+            cover.style.pageBreakAfter = "always";
+            cover.style.breakAfter = "page";
+            cover.style.margin = "0";
+            cover.style.padding = "0";
+            cover.style.border = "0";
+            cover.style.boxShadow = "none";
+            cover.style.minHeight = "230mm";
+            cover.style.display = "block";
+            cover.style.textAlign = "center";
+            cover.querySelectorAll<HTMLElement>("*").forEach((node) => {
+              node.style.borderTop = "0";
+              node.style.borderBottom = "0";
+              node.style.borderLeft = "0";
+              node.style.borderRight = "0";
+              node.style.boxShadow = "none";
+              node.style.marginLeft = "0";
+              node.style.marginRight = "0";
+              node.style.textIndent = "0";
+            });
+
+            const coverTitle = cover.querySelector("p.SigmaHeading14") as HTMLElement | null;
+            if (coverTitle) coverTitle.style.paddingTop = "60mm";
+            else cover.querySelectorAll<HTMLElement>("p")[0]?.style.setProperty("padding-top", "60mm");
+          }
+
+          exportElement.querySelectorAll<HTMLElement>("*").forEach((node) => {
+            if (node.closest("table")) return;
+            node.style.boxShadow = "none";
+            if (!node.classList.contains("cover-page")) {
+              node.style.borderTop = "0";
+              node.style.borderBottom = "0";
+              node.style.borderLeft = "0";
+              node.style.borderRight = "0";
+            }
+          });
+
+          const html = `<!DOCTYPE html>
+<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
 <head>
 <meta charset='utf-8'>
 <title>Modul Ajar SIGMA</title>
 <style>
-  @page WordSection1 {
-    size: 21cm 29.7cm;
-    margin: 2.5cm 2cm 2.5cm 3cm;
-    mso-page-orientation: portrait;
-  }
-
-  div.WordSection1 {
-    page: WordSection1;
-  }
-
-  html, body {
-    margin: 0 !important;
-    padding: 0 !important;
-    font-family: 'Times New Roman', Times, serif !important;
-    font-size: 12pt !important;
-    line-height: 150% !important;
-    color: #000 !important;
-  }
-
-  p,
-  div,
-  li,
-  ul,
-  ol,
-  table,
-  tbody,
-  thead,
-  tr,
-  td,
-  th {
-    font-family: 'Times New Roman', Times, serif !important;
-  }
-
-  p,
-  div,
-  li {
-    font-size: 12pt;
-    line-height: 150%;
-    margin: 0 !important;
-    padding: 0 !important;
-    margin-left: 0 !important;
-    margin-right: 0 !important;
-    text-indent: 0 !important;
-    mso-margin-top-alt: 0 !important;
-    mso-margin-bottom-alt: 0 !important;
-    mso-para-margin-left: 0 !important;
-    mso-para-margin-right: 0 !important;
-  }
-
-  p.SigmaBody {
-    font-size: 12pt !important;
-    line-height: 150% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    text-indent: 0 !important;
-    mso-margin-top-alt: 0 !important;
-    mso-margin-bottom-alt: 0 !important;
-    mso-para-margin-left: 0 !important;
-    mso-para-margin-right: 0 !important;
-  }
-
-  p.SigmaHeading14 {
-    font-size: 14pt !important;
-    font-weight: bold !important;
-    line-height: 150% !important;
-    color: ${colorHex} !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    text-indent: 0 !important;
-    border: 0 !important;
-    box-shadow: none !important;
-    text-decoration: none !important;
-    mso-margin-top-alt: 0 !important;
-    mso-margin-bottom-alt: 0 !important;
-    mso-para-margin-left: 0 !important;
-    mso-para-margin-right: 0 !important;
-  }
-
-  p.SigmaHeading12 {
-    font-size: 12pt !important;
-    font-weight: bold !important;
-    line-height: 150% !important;
-    color: ${colorHex} !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    text-indent: 0 !important;
-    border: 0 !important;
-    box-shadow: none !important;
-    text-decoration: none !important;
-    mso-margin-top-alt: 0 !important;
-    mso-margin-bottom-alt: 0 !important;
-    mso-para-margin-left: 0 !important;
-    mso-para-margin-right: 0 !important;
-  }
-
-  .cover-page {
-    page-break-after: always !important;
-    break-after: page !important;
-    text-align: center !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    min-height: 230mm !important;
-    border: 0 !important;
-    box-shadow: none !important;
-  }
-
-  .document-preview {
-    margin: 0 !important;
-    padding: 0 !important;
-  }
-
-  ul,
-  ol {
-    list-style: none !important;
-    margin: 0 !important;
-    padding: 0 !important;
-  }
-
-  table {
-    border-collapse: collapse;
-    width: 100%;
-    margin: 0 !important;
-    padding: 0 !important;
-    page-break-inside: auto;
-  }
-
-  tr {
-    page-break-inside: avoid;
-    page-break-after: auto;
-  }
-
-  th,
-  td {
-    border: 1px solid #000;
-    padding: 6pt;
-    vertical-align: top;
-    font-family: 'Times New Roman', Times, serif !important;
-    font-size: 12pt !important;
-    line-height: 150% !important;
-    margin: 0 !important;
-    text-indent: 0 !important;
-  }
-
-  a {
-    color: #000 !important;
-    text-decoration: none !important;
-  }
+@page WordSection1 { size: 21cm 29.7cm; margin: 2.5cm 2cm 2.5cm 3cm; mso-page-orientation: portrait; }
+div.WordSection1 { page: WordSection1; }
+html, body { margin:0 !important; padding:0 !important; font-family:'Times New Roman', Times, serif !important; font-size:12pt !important; line-height:150% !important; color:#000 !important; }
+p, div, li { font-family:'Times New Roman', Times, serif !important; font-size:12pt; line-height:150%; margin:0 !important; padding:0 !important; margin-left:0 !important; margin-right:0 !important; text-indent:0 !important; mso-margin-top-alt:0 !important; mso-margin-bottom-alt:0 !important; mso-para-margin-left:0 !important; mso-para-margin-right:0 !important; }
+p.SigmaBody { font-size:12pt !important; line-height:150% !important; margin:0 !important; padding:0 !important; text-indent:0 !important; }
+p.SigmaHeading14 { font-size:14pt !important; font-weight:bold !important; line-height:150% !important; color:${colorHex} !important; margin:0 !important; padding:0 !important; text-indent:0 !important; border:0 !important; box-shadow:none !important; text-decoration:none !important; mso-margin-top-alt:0 !important; mso-margin-bottom-alt:0 !important; mso-para-margin-left:0 !important; mso-para-margin-right:0 !important; }
+p.SigmaHeading12 { font-size:12pt !important; font-weight:bold !important; line-height:150% !important; color:${colorHex} !important; margin:0 !important; padding:0 !important; text-indent:0 !important; border:0 !important; box-shadow:none !important; text-decoration:none !important; mso-margin-top-alt:0 !important; mso-margin-bottom-alt:0 !important; mso-para-margin-left:0 !important; mso-para-margin-right:0 !important; }
+.cover-page { page-break-after:always !important; break-after:page !important; text-align:center !important; margin:0 !important; padding:0 !important; min-height:230mm !important; border:0 !important; box-shadow:none !important; }
+.document-preview { margin:0 !important; padding:0 !important; }
+ul, ol { list-style:none !important; margin:0 !important; padding:0 !important; }
+table { border-collapse:collapse; width:100%; margin:0 !important; padding:0 !important; page-break-inside:auto; }
+tr { page-break-inside:avoid; page-break-after:auto; }
+th, td { border:1px solid #000; padding:6pt; vertical-align:top; font-family:'Times New Roman', Times, serif !important; font-size:12pt !important; line-height:150% !important; margin:0 !important; text-indent:0 !important; }
+a { color:#000 !important; text-decoration:none !important; }
 </style>
 </head>
-<body>
-  <div class='WordSection1'>${exportElement.innerHTML}</div>
-</body>
-</html>`;
+<body><div class='WordSection1'>${exportElement.innerHTML}</div></body></html>`;
 
-      const blob = new Blob(["\ufeff", html], { type: "application/msword" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `Modul-Ajar-${slugify(form.mata_pelajaran || "SIGMA")}.doc`;
-      link.style.display = "none";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+          const blob = new Blob(["\ufeff", html], { type: "application/msword" });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `Modul-Ajar-${slugify(form.mata_pelajaran || "SIGMA")}.doc`;
+          link.style.display = "none";
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+          setPaymentMessage("Modul lengkap berhasil disiapkan dan diunduh.");
+        } catch (err) {
+          setError(err instanceof Error ? `Gagal membuat Word: ${err.message}` : "Gagal membuat Word.");
+        }
+      }, 150);
     } catch (err) {
-      setError(err instanceof Error ? `Gagal membuat Word: ${err.message}` : "Gagal membuat Word.");
+      setError(err instanceof Error ? err.message : "Gagal menyiapkan modul lengkap.");
     }
   }
 
@@ -708,6 +703,8 @@ function GeneratorPage() {
         </div>
 
         {error && <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-4 font-medium text-red-600"><span>⚠️</span><span>{error}</span></div>}
+
+        {paymentMessage && <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 font-medium text-emerald-800"><span>✓</span><span>{paymentMessage}</span></div>}
 
         <form id="generator-form" onSubmit={generateModule} className="space-y-4">
           <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">

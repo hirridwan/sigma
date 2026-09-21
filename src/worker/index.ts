@@ -8,10 +8,14 @@ import {
 
 interface Env {
   GEMINI_API_KEY: string;
+  PAKASIR_API_KEY: string;
 }
+
 
 const MODEL = "gemini-3.8-flash";
 const MAX_REFERENCE_FILE_BYTES = 15 * 1024 * 1024;
+const PAKASIR_SLUG = "sigma-sistem-generator-modul-ajar";
+const PAKASIR_AMOUNT = 5000;
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -75,6 +79,46 @@ function buildReferenceSection(referenceUrl: string, referenceFileName: string):
   }
 
   return `\n\n---\n\n## SUMBER REFERENSI\n\n${items.join("\n")}`;
+}
+
+function buildPreviewMarkdown(markdown: string): string {
+  const clean = markdown.trim();
+  const maxChars = 6500;
+  if (clean.length <= maxChars) return clean;
+
+  let preview = clean.slice(0, maxChars);
+  const lastBreak = preview.lastIndexOf("\n\n");
+  if (lastBreak > 2500) preview = preview.slice(0, lastBreak);
+
+  return `${preview.trim()}\n\n---\n\n## 🔒 MODUL LENGKAP TERKUNCI\n\nPratinjau ini hanya menampilkan sebagian isi modul. **Pembayaran diperlukan untuk mendapatkan modul lengkap dalam format Word.**`;
+}
+
+async function verifyPakasirTransaction(c: any, orderId: string): Promise<boolean> {
+  if (!c.env.PAKASIR_API_KEY) {
+    throw new Error("PAKASIR_API_KEY belum tersedia di Cloudflare.");
+  }
+
+  const url = new URL("https://app.pakasir.com/api/transactiondetail");
+  url.searchParams.set("project", PAKASIR_SLUG);
+  url.searchParams.set("amount", String(PAKASIR_AMOUNT));
+  url.searchParams.set("order_id", orderId);
+  url.searchParams.set("api_key", c.env.PAKASIR_API_KEY);
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    headers: { Accept: "application/json" },
+  });
+
+  const result = await response.json().catch(() => null) as { transaction?: { status?: string; amount?: number; project?: string; order_id?: string } } | null;
+  const transaction = result?.transaction;
+
+  if (!response.ok || !transaction) return false;
+  return (
+    transaction.status === "completed" &&
+    transaction.amount === PAKASIR_AMOUNT &&
+    transaction.project === PAKASIR_SLUG &&
+    transaction.order_id === orderId
+  );
 }
 
 function buildDefaultStructure(): string {
@@ -197,6 +241,46 @@ async function waitForFileReady(ai: GoogleGenAI, name: string): Promise<void> {
   throw new Error("File referensi terlalu lama diproses oleh Gemini.");
 }
 
+app.post("/api/payment/create", async (c) => {
+  try {
+    const body = await c.req.json<{ form_hash?: string }>().catch(() => ({ form_hash: "" }));
+    const formHash = body.form_hash?.trim().toLowerCase() || "";
+    if (!/^[a-f0-9]{64}$/.test(formHash)) {
+      return c.json({ success: false, message: "Form hash pembayaran tidak valid." }, 400);
+    }
+
+    const orderId = `SIGMA-${formHash.slice(0, 16)}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    const origin = new URL(c.req.url).origin;
+    const redirectUrl = `${origin}/modul-ajar?payment=success&order_id=${encodeURIComponent(orderId)}`;
+    const paymentUrl = new URL(`https://app.pakasir.com/pay/${PAKASIR_SLUG}/${PAKASIR_AMOUNT}`);
+    paymentUrl.searchParams.set("order_id", orderId);
+    paymentUrl.searchParams.set("redirect", redirectUrl);
+
+    return c.json({
+      success: true,
+      order_id: orderId,
+      amount: PAKASIR_AMOUNT,
+      payment_url: paymentUrl.toString(),
+    });
+  } catch (error) {
+    console.error("SIGMA /api/payment/create error", error);
+    return c.json({ success: false, message: "Gagal membuat transaksi pembayaran." }, 500);
+  }
+});
+
+app.get("/api/payment/verify", async (c) => {
+  try {
+    const orderId = c.req.query("order_id")?.trim();
+    if (!orderId) return c.json({ success: false, message: "order_id wajib diisi." }, 400);
+
+    const paid = await verifyPakasirTransaction(c, orderId);
+    return c.json({ success: true, paid, order_id: orderId, amount: PAKASIR_AMOUNT });
+  } catch (error) {
+    console.error("SIGMA /api/payment/verify error", error);
+    return c.json({ success: false, message: error instanceof Error ? error.message : "Gagal memverifikasi pembayaran." }, 500);
+  }
+});
+
 app.post("/api/generate", async (c) => {
   let uploadedGeminiFileName: string | undefined;
 
@@ -294,6 +378,23 @@ app.post("/api/generate", async (c) => {
       }
     }
 
+    const paidDownload = data.paid_download === "true";
+    if (paidDownload) {
+      const orderId = data.order_id?.trim();
+      const formHash = data.form_hash?.trim().toLowerCase();
+      if (!orderId || !formHash) {
+        return c.json({ success: false, message: "order_id dan form_hash pembayaran wajib diisi." }, 400);
+      }
+      if (!/^[a-f0-9]{64}$/.test(formHash) || !orderId.startsWith(`SIGMA-${formHash.slice(0, 16)}-`)) {
+        return c.json({ success: false, message: "Transaksi tidak cocok dengan modul yang sedang diunduh." }, 403);
+      }
+
+      const paid = await verifyPakasirTransaction(c, orderId);
+      if (!paid) {
+        return c.json({ success: false, message: "Pembayaran belum terverifikasi atau transaksi belum selesai." }, 402);
+      }
+    }
+
     const ai = new GoogleGenAI({ apiKey: c.env.GEMINI_API_KEY });
 
     const contextParts: string[] = [];
@@ -373,10 +474,13 @@ app.post("/api/generate", async (c) => {
       referenceUrl,
       referenceFileName,
     )}`;
+    const output = paidDownload ? dataWithReferences : buildPreviewMarkdown(dataWithReferences);
 
     return c.json({
       success: true,
-      data: dataWithReferences,
+      data: output,
+      paid: paidDownload,
+      amount: PAKASIR_AMOUNT,
       sources: {
         url: referenceUrl || null,
         file: referenceFileName || null,
