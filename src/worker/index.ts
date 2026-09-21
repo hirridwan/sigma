@@ -10,6 +10,7 @@ import {
 interface Env {
   GEMINI_API_KEY: string;
   PAKASIR_API_KEY: string;
+  PAKASIR_WEBHOOK_SECRET: string;
 }
 
 
@@ -185,80 +186,235 @@ a { color:#000 !important; text-decoration:none !important; }
 </html>`;
 }
 
-async function verifyPakasirTransactionDetailed(
+const GENERATOR_FORM_KEYS = [
+  "pilihan_template",
+  "warna_tema",
+  "template_custom",
+  "nama_penyusun",
+  "identitas_sekolah",
+  "tahun_penyusunan",
+  "kurikulum",
+  "fase_kelas_jenjang",
+  "mata_pelajaran",
+  "bab_tema",
+  "capaian_pembelajaran",
+  "materi_pembelajaran",
+  "alokasi_waktu",
+  "praktik_pedagogis",
+  "metode_pembelajaran",
+  "pendekatan_pembelajaran",
+  "prinsip_pembelajaran_mendalam",
+  "pengalaman_belajar",
+  "kemitraan_pembelajaran",
+  "lingkungan_pembelajaran",
+  "pemanfaatan_digital",
+  "asesmen_awal",
+  "asesmen_proses",
+  "asesmen_akhir",
+  "sumber_referensi_url",
+] as const;
+
+type PakasirTransaction = {
+  txn_id?: string;
+  order_id?: string;
+  amount?: number;
+  is_sandbox?: boolean;
+  status?: string;
+  completed_at?: string;
+};
+
+function bytesToBase64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlToBytes(value: string): Uint8Array {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+async function signPaymentProof(c: any, payload: string): Promise<string> {
+  if (!c.env.PAKASIR_API_KEY) {
+    throw new Error("PAKASIR_API_KEY belum tersedia di Cloudflare.");
+  }
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(c.env.PAKASIR_API_KEY),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  return bytesToBase64Url(new Uint8Array(signature));
+}
+
+async function createPaymentProof(c: any, txnId: string, orderId: string, formHash: string): Promise<string> {
+  const payload = JSON.stringify({
+    txn_id: txnId,
+    order_id: orderId,
+    form_hash: formHash,
+    issued_at: Date.now(),
+  });
+  const encoded = bytesToBase64Url(new TextEncoder().encode(payload));
+  const signature = await signPaymentProof(c, encoded);
+  return `${encoded}.${signature}`;
+}
+
+async function verifyPaymentProof(
   c: any,
-  orderId: string,
-): Promise<{
-  paid: boolean;
-  transaction?: { status?: string; amount?: number; project?: string; order_id?: string; payment_method?: string; completed_at?: string };
-}> {
+  proof: string,
+  expectedTxnId: string,
+  expectedOrderId: string,
+  expectedFormHash: string,
+): Promise<boolean> {
+  try {
+    if (!proof || !c.env.PAKASIR_API_KEY) return false;
+    const parts = proof.split(".");
+    if (parts.length !== 2) return false;
+
+    const [encoded, providedSignature] = parts;
+    const payload = JSON.parse(new TextDecoder().decode(base64UrlToBytes(encoded))) as {
+      txn_id?: string;
+      order_id?: string;
+      form_hash?: string;
+      issued_at?: number;
+    };
+
+    if (
+      payload.txn_id !== expectedTxnId ||
+      payload.order_id !== expectedOrderId ||
+      payload.form_hash !== expectedFormHash ||
+      typeof payload.issued_at !== "number"
+    ) {
+      return false;
+    }
+
+    const age = Date.now() - payload.issued_at;
+    if (age < -5 * 60 * 1000 || age > 24 * 60 * 60 * 1000) return false;
+
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(c.env.PAKASIR_API_KEY),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["verify"],
+    );
+
+    return await crypto.subtle.verify(
+      "HMAC",
+      key,
+      base64UrlToBytes(providedSignature),
+      new TextEncoder().encode(encoded),
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function hashGeneratorFormServer(data: Record<string, string>): Promise<string> {
+  const normalized = JSON.stringify(
+    [...GENERATOR_FORM_KEYS]
+      .sort()
+      .reduce<Record<string, string>>((acc, key) => {
+        acc[key] = data[key] ?? "";
+        return acc;
+      }, {}),
+  );
+
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalized));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function createPakasirPayment(c: any, orderId: string): Promise<{ txn_id: string; payment_link: string }> {
   if (!c.env.PAKASIR_API_KEY) {
     throw new Error("PAKASIR_API_KEY belum tersedia di Cloudflare.");
   }
 
-  // Pakasir's Transaction Detail API expects the merchant transaction amount.
-  // The customer may pay a higher total when the payment fee is borne by the payer.
-  const url = new URL("https://app.pakasir.com/api/transactiondetail");
-  url.searchParams.set("project", PAKASIR_SLUG);
-  url.searchParams.set("amount", String(PAKASIR_AMOUNT));
-  url.searchParams.set("order_id", orderId);
-  url.searchParams.set("api_key", c.env.PAKASIR_API_KEY);
+  const endpoint = `https://app.pakasir.com/api/v2/create-transaction/${encodeURIComponent(PAKASIR_SLUG)}/${encodeURIComponent(orderId)}`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Api-Key": c.env.PAKASIR_API_KEY,
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      method: "payment_link",
+      amount: PAKASIR_AMOUNT,
+    }),
+  });
 
-  let lastTransaction:
-    | { status?: string; amount?: number; project?: string; order_id?: string; payment_method?: string; completed_at?: string }
-    | undefined;
+  const result = await response.json().catch(() => null) as {
+    txn_id?: string;
+    payment_link?: string;
+    message?: string;
+    error?: string;
+  } | null;
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const response = await fetch(`${url.toString()}&_t=${Date.now()}`, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        "Cache-Control": "no-cache",
-      },
-    });
-
-    const result = await response.json().catch(() => null) as {
-      transaction?: {
-        status?: string;
-        amount?: number;
-        project?: string;
-        order_id?: string;
-        payment_method?: string;
-        completed_at?: string;
-      };
-    } | null;
-
-    const transaction = result?.transaction;
-    lastTransaction = transaction;
-
-    const status = String(transaction?.status || "").trim().toLowerCase();
-    const returnedOrderId = String(transaction?.order_id || "").trim();
-    const returnedProject = String(transaction?.project || "").trim();
-
-    // The request itself is scoped to the SIGMA project and the expected
-    // merchant amount. Require the completed status + exact order/project.
-    // The customer-facing total can include a separate payment fee.
-    if (
-      response.ok &&
-      transaction &&
-      status === "completed" &&
-      returnedOrderId === orderId &&
-      returnedProject === PAKASIR_SLUG &&
-      (!("amount" in transaction) || Number(transaction.amount) === PAKASIR_AMOUNT)
-    ) {
-      return { paid: true, transaction };
-    }
-
-    if (attempt < 2) {
-      await new Promise((resolve) => setTimeout(resolve, 900));
-    }
+  if (!response.ok || !result?.txn_id || !result.payment_link) {
+    throw new Error(result?.message || result?.error || `Pakasir gagal membuat transaksi (${response.status}).`);
   }
 
-  return { paid: false, transaction: lastTransaction };
+  return {
+    txn_id: result.txn_id,
+    payment_link: result.payment_link,
+  };
 }
 
-async function verifyPakasirTransaction(c: any, orderId: string): Promise<boolean> {
-  const result = await verifyPakasirTransactionDetailed(c, orderId);
+async function getPakasirTransactionStatus(c: any, txnId: string): Promise<PakasirTransaction> {
+  if (!c.env.PAKASIR_API_KEY) {
+    throw new Error("PAKASIR_API_KEY belum tersedia di Cloudflare.");
+  }
+
+  const endpoint = `https://app.pakasir.com/api/v2/transaction-status/${encodeURIComponent(PAKASIR_SLUG)}/${encodeURIComponent(txnId)}`;
+  const response = await fetch(endpoint, {
+    method: "GET",
+    headers: {
+      "X-Api-Key": c.env.PAKASIR_API_KEY,
+      Accept: "application/json",
+      "Cache-Control": "no-cache",
+    },
+  });
+
+  const result = await response.json().catch(() => null) as (PakasirTransaction & { message?: string; error?: string }) | null;
+
+  if (!response.ok || !result?.txn_id) {
+    const suffix = result?.message || result?.error || `status ${response.status}`;
+    if (response.status === 429) {
+      throw new Error(`Pengecekan status sedang dibatasi Pakasir. Tunggu beberapa detik lalu coba lagi. (${suffix})`);
+    }
+    throw new Error(`Gagal mengambil status transaksi Pakasir (${suffix}).`);
+  }
+
+  return result;
+}
+
+async function verifyPakasirTransactionDetailed(
+  c: any,
+  txnId: string,
+  expectedOrderId?: string,
+): Promise<{ paid: boolean; transaction?: PakasirTransaction }> {
+  if (!txnId) return { paid: false };
+
+  const transaction = await getPakasirTransactionStatus(c, txnId);
+  const status = String(transaction.status || "").trim().toLowerCase();
+  const returnedOrderId = String(transaction.order_id || "").trim();
+  const validOrder = expectedOrderId ? returnedOrderId === expectedOrderId : true;
+  const validAmount = typeof transaction.amount === "number" ? transaction.amount === PAKASIR_AMOUNT : false;
+
+  return {
+    paid: status === "completed" && validOrder && validAmount,
+    transaction,
+  };
+}
+
+async function verifyPakasirTransaction(c: any, txnId: string, expectedOrderId?: string): Promise<boolean> {
+  const result = await verifyPakasirTransactionDetailed(c, txnId, expectedOrderId);
   return result.paid;
 }
 
@@ -391,106 +547,82 @@ app.post("/api/payment/create", async (c) => {
     }
 
     const orderId = `SIGMA-${formHash.slice(0, 16)}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-
-    // Setelah pembayaran selesai, Pakasir diarahkan kembali ke callback SIGMA
-    // yang berada di dalam iframe. Callback akan memverifikasi transaksi
-    // lalu mengirim postMessage ke halaman SIGMA induk.
-    const origin = new URL(c.req.url).origin;
-    const callbackUrl = new URL("/api/payment/callback", origin);
-    callbackUrl.searchParams.set("order_id", orderId);
-    callbackUrl.searchParams.set("form_hash", formHash);
-
-    const paymentUrl = new URL(`https://app.pakasir.com/pay/${PAKASIR_SLUG}/${PAKASIR_AMOUNT}`);
-    paymentUrl.searchParams.set("order_id", orderId);
-    paymentUrl.searchParams.set("redirect", callbackUrl.toString());
+    const transaction = await createPakasirPayment(c, orderId);
 
     return c.json({
       success: true,
       order_id: orderId,
+      txn_id: transaction.txn_id,
       amount: PAKASIR_AMOUNT,
-      payment_url: paymentUrl.toString(),
+      payment_url: transaction.payment_link,
     });
   } catch (error) {
     console.error("SIGMA /api/payment/create error", error);
-    return c.json({ success: false, message: "Gagal membuat transaksi pembayaran." }, 500);
+    return c.json(
+      { success: false, message: error instanceof Error ? error.message : "Gagal membuat transaksi pembayaran." },
+      500,
+    );
   }
 });
 
-app.get("/api/payment/callback", async (c) => {
-  const orderId = c.req.query("order_id")?.trim() || "";
-  const formHash = c.req.query("form_hash")?.trim().toLowerCase() || "";
-  const origin = new URL(c.req.url).origin;
-
-  const baseHtml = (title: string, message: string, success: boolean) => `<!doctype html>
-<html lang="id">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SIGMA - ${success ? "Pembayaran Berhasil" : "Verifikasi Pembayaran"}</title>
-  <style>
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f8fafc; color: #0f172a; font-family: Arial, sans-serif; }
-    .card { width: min(92vw, 560px); box-sizing: border-box; padding: 28px; border-radius: 18px; background: white; border: 1px solid #e2e8f0; box-shadow: 0 20px 40px rgba(15,23,42,.08); text-align: center; }
-    .title { margin: 0 0 8px; font-size: 22px; font-weight: 800; color: ${success ? "#047857" : "#1e3a8a"}; }
-    .message { margin: 0; color: #475569; line-height: 1.6; font-size: 14px; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1 class="title">${title}</h1>
-    <p class="message">${message}</p>
-  </div>
-  <script>
-    const payload = ${JSON.stringify({
-      source: "sigma-pakasir",
-      type: success ? "SIGMA_PAYMENT_SUCCESS" : "SIGMA_PAYMENT_ERROR",
-      orderId,
-      formHash,
-      message,
-    })};
-    const targetOrigin = ${JSON.stringify(origin)};
-    if (window.parent && window.parent !== window) {
-      window.parent.postMessage(payload, targetOrigin);
-    } else if (${JSON.stringify(success)}) {
-      window.location.replace(${JSON.stringify(`/modul-ajar?payment=success&order_id=${encodeURIComponent(orderId)}&form_hash=${encodeURIComponent(formHash)}`)});
-    }
-  </script>
-</body>
-</html>`;
-
-  if (!orderId || !/^[a-f0-9]{64}$/.test(formHash)) {
-    return c.html(baseHtml("Verifikasi pembayaran gagal", "Data transaksi tidak lengkap.", false), 400);
-  }
-
-  if (!orderId.startsWith(`SIGMA-${formHash.slice(0, 16)}-`)) {
-    return c.html(baseHtml("Verifikasi pembayaran gagal", "Transaksi tidak cocok dengan modul ini.", false), 403);
-  }
-
+app.post("/api/payment/webhook", async (c) => {
   try {
-    const paid = await verifyPakasirTransaction(c, orderId);
-    if (!paid) {
-      return c.html(baseHtml("Pembayaran belum terverifikasi", "Silakan kembali ke SIGMA dan tunggu sampai status pembayaran selesai.", false), 402);
+    const configuredSecret = c.env.PAKASIR_WEBHOOK_SECRET?.trim();
+    if (!configuredSecret) {
+      return c.json({ success: false, message: "PAKASIR_WEBHOOK_SECRET belum tersedia di Cloudflare." }, 500);
     }
 
-    return new Response(baseHtml(
-      "Pembayaran berhasil",
-      "SIGMA sedang menyiapkan modul ajar dan akan mengunduh file Word secara otomatis.",
-      true,
-    ), {
-      status: 200,
-      headers: {
-        "Content-Type": "text/html; charset=utf-8",
-        "Cache-Control": "no-store, no-cache, must-revalidate, private",
-        "Pragma": "no-cache",
-      },
+    const receivedSecret = c.req.header("X-Secret")?.trim() || "";
+    if (!receivedSecret || receivedSecret !== configuredSecret) {
+      return c.json({ success: false, message: "Webhook secret tidak valid." }, 401);
+    }
+
+    const payload = await c.req.json<{
+      txn_id?: string;
+      order_id?: string;
+      amount?: number;
+      is_sandbox?: boolean;
+      status?: string;
+      completed_at?: string;
+    }>();
+
+    const txnId = payload.txn_id?.trim() || "";
+    const orderId = payload.order_id?.trim() || "";
+    const amount = Number(payload.amount);
+    const status = String(payload.status || "").trim().toLowerCase();
+
+    if (!txnId || !orderId || !Number.isFinite(amount)) {
+      return c.json({ success: false, message: "Payload webhook tidak lengkap." }, 400);
+    }
+
+    if (!orderId.startsWith("SIGMA-")) {
+      return c.json({ success: false, message: "Webhook bukan untuk transaksi SIGMA." }, 400);
+    }
+
+    if (status !== "completed") {
+      return c.json({ success: true, received: true, ignored: true }, 200);
+    }
+
+    if (amount !== PAKASIR_AMOUNT) {
+      return c.json({ success: false, message: "Nominal webhook tidak sesuai transaksi SIGMA." }, 400);
+    }
+
+    console.log("SIGMA Pakasir webhook completed", {
+      txn_id: txnId,
+      order_id: orderId,
+      amount,
+      is_sandbox: payload.is_sandbox,
+      status,
+      completed_at: payload.completed_at,
+    });
+
+    return c.json({ success: true, received: true }, 200, {
+      "Cache-Control": "no-store, no-cache, must-revalidate, private",
     });
   } catch (error) {
-    console.error("SIGMA /api/payment/callback error", error);
-    return c.html(
-      baseHtml(
-        "Verifikasi pembayaran gagal",
-        error instanceof Error ? error.message : "Terjadi kesalahan saat memverifikasi pembayaran.",
-        false,
-      ),
+    console.error("SIGMA /api/payment/webhook error", error);
+    return c.json(
+      { success: false, message: error instanceof Error ? error.message : "Gagal menerima webhook Pakasir." },
       500,
     );
   }
@@ -498,38 +630,81 @@ app.get("/api/payment/callback", async (c) => {
 
 app.get("/api/payment/verify", async (c) => {
   try {
-    const orderId = c.req.query("order_id")?.trim();
-    if (!orderId) {
+    const txnId = c.req.query("txn_id")?.trim() || "";
+    const orderId = c.req.query("order_id")?.trim() || "";
+    const formHash = c.req.query("form_hash")?.trim().toLowerCase() || "";
+
+    if (!txnId || !orderId || !/^[a-f0-9]{64}$/.test(formHash)) {
       return c.json(
-        { success: false, paid: false, message: "order_id wajib diisi." },
+        { success: false, paid: false, message: "txn_id, order_id, dan form_hash wajib diisi." },
         400,
         { "Cache-Control": "no-store, no-cache, must-revalidate, private" },
       );
     }
 
-    const result = await verifyPakasirTransactionDetailed(c, orderId);
+    if (!orderId.startsWith(`SIGMA-${formHash.slice(0, 16)}-`)) {
+      return c.json(
+        { success: false, paid: false, message: "Transaksi tidak cocok dengan modul ini." },
+        403,
+        { "Cache-Control": "no-store, no-cache, must-revalidate, private" },
+      );
+    }
+
+    const result = await verifyPakasirTransactionDetailed(c, txnId, orderId);
+    const proof = result.paid ? await createPaymentProof(c, txnId, orderId, formHash) : "";
 
     return c.json(
       {
         success: true,
         paid: result.paid,
         order_id: orderId,
+        txn_id: txnId,
         amount: PAKASIR_AMOUNT,
         transaction: result.transaction || null,
+        payment_proof: proof || null,
       },
       200,
       { "Cache-Control": "no-store, no-cache, must-revalidate, private", Pragma: "no-cache" },
     );
   } catch (error) {
     console.error("SIGMA /api/payment/verify error", error);
+    const message = error instanceof Error ? error.message : "Gagal memverifikasi pembayaran.";
+    const status = message.includes("dibatasi Pakasir") ? 429 : 502;
     return c.json(
-      {
-        success: false,
-        paid: false,
-        message: error instanceof Error ? error.message : "Gagal memverifikasi pembayaran.",
-      },
-      500,
+      { success: false, paid: false, message },
+      status,
       { "Cache-Control": "no-store, no-cache, must-revalidate, private", Pragma: "no-cache" },
+    );
+  }
+});
+
+app.get("/api/payment/fee/:amount", async (c) => {
+  try {
+    const amountText = c.req.param("amount");
+    const amount = Number(amountText);
+    if (!Number.isInteger(amount) || amount <= 0) {
+      return c.json({ success: false, message: "Nominal transaksi tidak valid." }, 400);
+    }
+
+    const response = await fetch(`https://app.pakasir.com/api/v2/payment-fee/${encodeURIComponent(amountText)}`, {
+      method: "GET",
+      headers: { Accept: "application/json", "Cache-Control": "no-cache" },
+    });
+    const result = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      return c.json(
+        { success: false, message: "Gagal menghitung estimasi biaya pembayaran.", detail: result ?? null },
+        502,
+      );
+    }
+
+    return c.json({ success: true, amount, fees: result }, 200, { "Cache-Control": "no-store" });
+  } catch (error) {
+    console.error("SIGMA /api/payment/fee error", error);
+    return c.json(
+      { success: false, message: error instanceof Error ? error.message : "Gagal menghitung estimasi biaya pembayaran." },
+      500,
     );
   }
 });
@@ -543,10 +718,12 @@ app.post("/api/payment/download-word", async (c) => {
     }
 
     const orderId = data.order_id?.trim() || "";
+    const txnId = data.txn_id?.trim() || "";
     const formHash = data.form_hash?.trim().toLowerCase() || "";
+    const paymentProof = data.payment_proof?.trim() || "";
     const markdown = data.markdown || "";
 
-    if (!orderId || !formHash || !markdown) {
+    if (!orderId || !txnId || !formHash || !paymentProof || !markdown) {
       return c.json({ success: false, message: "Data download belum lengkap." }, 400);
     }
 
@@ -554,9 +731,9 @@ app.post("/api/payment/download-word", async (c) => {
       return c.json({ success: false, message: "Transaksi tidak cocok dengan modul ini." }, 403);
     }
 
-    const paid = await verifyPakasirTransaction(c, orderId);
-    if (!paid) {
-      return c.json({ success: false, message: "Pembayaran belum terverifikasi." }, 402);
+    const proofValid = await verifyPaymentProof(c, paymentProof, txnId, orderId, formHash);
+    if (!proofValid) {
+      return c.json({ success: false, message: "Verifikasi pembayaran tidak valid atau sudah kedaluwarsa." }, 402);
     }
 
     const html = buildWordDocument(
@@ -686,18 +863,27 @@ app.post("/api/generate", async (c) => {
 
     const paidDownload = data.paid_download === "true";
     if (paidDownload) {
-      const orderId = data.order_id?.trim();
-      const formHash = data.form_hash?.trim().toLowerCase();
-      if (!orderId || !formHash) {
-        return c.json({ success: false, message: "order_id dan form_hash pembayaran wajib diisi." }, 400);
+      const orderId = data.order_id?.trim() || "";
+      const txnId = data.txn_id?.trim() || "";
+      const formHash = data.form_hash?.trim().toLowerCase() || "";
+      const paymentProof = data.payment_proof?.trim() || "";
+
+      if (!orderId || !txnId || !formHash || !paymentProof) {
+        return c.json({ success: false, message: "order_id, txn_id, form_hash, dan payment_proof wajib diisi." }, 400);
       }
+
       if (!/^[a-f0-9]{64}$/.test(formHash) || !orderId.startsWith(`SIGMA-${formHash.slice(0, 16)}-`)) {
         return c.json({ success: false, message: "Transaksi tidak cocok dengan modul yang sedang diunduh." }, 403);
       }
 
-      const paid = await verifyPakasirTransaction(c, orderId);
-      if (!paid) {
-        return c.json({ success: false, message: "Pembayaran belum terverifikasi atau transaksi belum selesai." }, 402);
+      const serverFormHash = await hashGeneratorFormServer(data);
+      if (serverFormHash !== formHash) {
+        return c.json({ success: false, message: "Data modul berubah setelah pembayaran. Silakan lakukan pembayaran kembali untuk input yang baru." }, 403);
+      }
+
+      const proofValid = await verifyPaymentProof(c, paymentProof, txnId, orderId, formHash);
+      if (!proofValid) {
+        return c.json({ success: false, message: "Verifikasi pembayaran tidak valid atau sudah kedaluwarsa." }, 402);
       }
     }
 

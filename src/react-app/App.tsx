@@ -251,8 +251,8 @@ function GeneratorPage() {
     try {
       const saved = localStorage.getItem(PAYMENT_RESULT_KEY);
       if (!saved) return "";
-      const parsed = JSON.parse(saved) as { orderId?: string; formHash?: string };
-      return parsed.orderId && parsed.formHash ? parsed.orderId : "";
+      const parsed = JSON.parse(saved) as { orderId?: string; formHash?: string; txnId?: string; paymentProof?: string };
+      return parsed.orderId && parsed.formHash && parsed.txnId && parsed.paymentProof ? parsed.orderId : "";
     } catch {
       return "";
     }
@@ -261,14 +261,35 @@ function GeneratorPage() {
     try {
       const saved = localStorage.getItem(PAYMENT_RESULT_KEY);
       if (!saved) return "";
-      const parsed = JSON.parse(saved) as { orderId?: string; formHash?: string };
-      return parsed.orderId && parsed.formHash ? parsed.formHash : "";
+      const parsed = JSON.parse(saved) as { orderId?: string; formHash?: string; txnId?: string; paymentProof?: string };
+      return parsed.orderId && parsed.formHash && parsed.txnId && parsed.paymentProof ? parsed.formHash : "";
+    } catch {
+      return "";
+    }
+  });
+  const [paymentVerifiedTxnId, setPaymentVerifiedTxnId] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(PAYMENT_RESULT_KEY);
+      if (!saved) return "";
+      const parsed = JSON.parse(saved) as { orderId?: string; formHash?: string; txnId?: string; paymentProof?: string };
+      return parsed.orderId && parsed.formHash && parsed.txnId && parsed.paymentProof ? parsed.txnId : "";
+    } catch {
+      return "";
+    }
+  });
+  const [paymentVerifiedProof, setPaymentVerifiedProof] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(PAYMENT_RESULT_KEY);
+      if (!saved) return "";
+      const parsed = JSON.parse(saved) as { orderId?: string; formHash?: string; txnId?: string; paymentProof?: string };
+      return parsed.orderId && parsed.formHash && parsed.txnId && parsed.paymentProof ? parsed.paymentProof : "";
     } catch {
       return "";
     }
   });
   const [paymentOrderId, setPaymentOrderId] = useState("");
   const [paymentFormHash, setPaymentFormHash] = useState("");
+  const [paymentTxnId, setPaymentTxnId] = useState("");
   const [paymentUrl, setPaymentUrl] = useState("");
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentChecking, setPaymentChecking] = useState(false);
@@ -296,10 +317,12 @@ function GeneratorPage() {
     const handleStorage = (event: StorageEvent) => {
       if (event.key !== PAYMENT_RESULT_KEY || !event.newValue) return;
       try {
-        const payment = JSON.parse(event.newValue) as { orderId?: string; formHash?: string; verifiedAt?: number };
-        if (payment.orderId && payment.formHash) {
+        const payment = JSON.parse(event.newValue) as { orderId?: string; formHash?: string; txnId?: string; paymentProof?: string; verifiedAt?: number };
+        if (payment.orderId && payment.formHash && payment.txnId && payment.paymentProof) {
           setPaymentVerifiedOrderId(payment.orderId);
           setPaymentVerifiedFormHash(payment.formHash);
+          setPaymentVerifiedTxnId(payment.txnId);
+          setPaymentVerifiedProof(payment.paymentProof);
           setPaymentMessage("Pembayaran berhasil diverifikasi. Modul lengkap sedang disiapkan untuk diunduh.");
         }
       } catch {
@@ -324,8 +347,11 @@ function GeneratorPage() {
     paymentHandledRef.current = false;
     setPaymentVerifiedOrderId("");
     setPaymentVerifiedFormHash("");
+    setPaymentVerifiedTxnId("");
+    setPaymentVerifiedProof("");
     setPaymentOrderId("");
     setPaymentFormHash("");
+    setPaymentTxnId("");
     setPaymentUrl("");
     setShowPaymentModal(false);
     localStorage.removeItem(PAYMENT_RESULT_KEY);
@@ -342,12 +368,14 @@ function GeneratorPage() {
     }
   }
 
-  async function downloadWordFromServer(markdown: string, orderId: string, formHash: string): Promise<void> {
+  async function downloadWordFromServer(markdown: string, orderId: string, txnId: string, formHash: string, paymentProof: string): Promise<void> {
     setPaymentMessage("Pembayaran berhasil. Menyiapkan file Word untuk diunduh...");
 
     const payload = new FormData();
     payload.append("order_id", orderId);
+    payload.append("txn_id", txnId);
     payload.append("form_hash", formHash);
+    payload.append("payment_proof", paymentProof);
     payload.append("markdown", markdown);
     payload.append("nama_penyusun", form.nama_penyusun);
     payload.append("fase_kelas_jenjang", form.fase_kelas_jenjang);
@@ -386,7 +414,7 @@ function GeneratorPage() {
     window.setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
 
-  async function loadPaidModule(orderId: string, formHash: string): Promise<string> {
+  async function loadPaidModule(orderId: string, txnId: string, formHash: string, paymentProof: string): Promise<string> {
     setError("");
     setPaymentMessage("Menyiapkan modul lengkap...");
 
@@ -401,7 +429,9 @@ function GeneratorPage() {
       ].join("; "));
       payload.append("paid_download", "true");
       payload.append("order_id", orderId);
+      payload.append("txn_id", txnId);
       payload.append("form_hash", formHash);
+      payload.append("payment_proof", paymentProof);
 
       if (referenceFile) {
         payload.append("reference_file", referenceFile, referenceFile.name);
@@ -431,15 +461,19 @@ function GeneratorPage() {
     }
   }
 
-  async function finalizePaidOrder(orderId: string, formHash: string) {
+  async function finalizePaidOrder(orderId: string, txnId: string, formHash: string, paymentProof: string) {
     if (paymentHandledRef.current) return;
     paymentHandledRef.current = true;
 
     setPaymentVerifiedOrderId(orderId);
     setPaymentVerifiedFormHash(formHash);
+    setPaymentVerifiedTxnId(txnId);
+    setPaymentVerifiedProof(paymentProof);
     localStorage.setItem(PAYMENT_RESULT_KEY, JSON.stringify({
       orderId,
+      txnId,
       formHash,
+      paymentProof,
       verifiedAt: Date.now(),
     }));
     setPaymentChecking(true);
@@ -447,11 +481,12 @@ function GeneratorPage() {
     setShowPaymentModal(false);
 
     try {
-      const fullMarkdown = await loadPaidModule(orderId, formHash);
-      await downloadWordFromServer(fullMarkdown, orderId, formHash);
+      const fullMarkdown = await loadPaidModule(orderId, txnId, formHash, paymentProof);
+      await downloadWordFromServer(fullMarkdown, orderId, txnId, formHash, paymentProof);
 
       setPaymentOrderId("");
       setPaymentFormHash("");
+      setPaymentTxnId("");
       setPaymentUrl("");
       setPaymentMessage("");
       setDownloadSuccess(true);
@@ -465,7 +500,7 @@ function GeneratorPage() {
   }
 
   useEffect(() => {
-    if (!showPaymentModal || !paymentOrderId || !paymentFormHash) return;
+    if (!showPaymentModal || !paymentOrderId || !paymentTxnId || !paymentFormHash) return;
 
     let cancelled = false;
     let inFlight = false;
@@ -475,7 +510,14 @@ function GeneratorPage() {
       inFlight = true;
       setPaymentChecking(true);
       try {
-        const response = await fetch(`/api/payment/verify?order_id=${encodeURIComponent(paymentOrderId)}&_t=${Date.now()}`, {
+        const query = new URLSearchParams({
+          txn_id: paymentTxnId,
+          order_id: paymentOrderId,
+          form_hash: paymentFormHash,
+        });
+        query.set("_t", String(Date.now()));
+
+        const response = await fetch(`/api/payment/verify?${query.toString()}`, {
           method: "GET",
           cache: "no-store",
           credentials: "same-origin",
@@ -485,12 +527,27 @@ function GeneratorPage() {
           success?: boolean;
           paid?: boolean;
           message?: string;
-          transaction?: { status?: string; amount?: number; project?: string; order_id?: string };
+          txn_id?: string;
+          payment_proof?: string | null;
+          transaction?: { status?: string; amount?: number; order_id?: string; txn_id?: string };
         } | null;
         if (cancelled) return;
 
-        if (response.ok && result?.success && result.paid) {
-          await finalizePaidOrder(paymentOrderId, paymentFormHash);
+        if (response.ok && result?.success && result.paid && result.payment_proof) {
+          await finalizePaidOrder(paymentOrderId, paymentTxnId, paymentFormHash, result.payment_proof);
+          return;
+        }
+
+        if (result?.transaction?.status === "canceled") {
+          setPaymentMessage("Transaksi dibatalkan atau sudah kedaluwarsa. Silakan tutup pembayaran lalu coba lagi.");
+          setPaymentChecking(false);
+          return;
+        }
+
+        if (response.status !== 429 && result?.message && !result.message.toLowerCase().includes("status transaksi")) {
+          setPaymentMessage(result.message);
+        } else {
+          setPaymentMessage("Menunggu pembayaran selesai. SIGMA akan memeriksa status secara otomatis.");
         }
       } catch (error) {
         if (!cancelled) setPaymentMessage(error instanceof Error ? error.message : "Sedang menunggu verifikasi pembayaran...");
@@ -501,34 +558,12 @@ function GeneratorPage() {
     };
 
     void checkPayment();
-    const interval = window.setInterval(() => void checkPayment(), 2500);
+    const interval = window.setInterval(() => void checkPayment(), 4500);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [showPaymentModal, paymentOrderId, paymentFormHash]);
-
-  useEffect(() => {
-    const handlePaymentMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return;
-
-      const data = event.data as {
-        source?: string;
-        type?: string;
-        orderId?: string;
-        formHash?: string;
-      } | null;
-
-      if (!data || data.source !== "sigma-pakasir" || data.type !== "SIGMA_PAYMENT_SUCCESS") return;
-      if (!paymentOrderId || !paymentFormHash) return;
-      if (data.orderId !== paymentOrderId || data.formHash !== paymentFormHash) return;
-
-      void finalizePaidOrder(data.orderId, data.formHash);
-    };
-
-    window.addEventListener("message", handlePaymentMessage);
-    return () => window.removeEventListener("message", handlePaymentMessage);
-  }, [paymentOrderId, paymentFormHash]);
+  }, [showPaymentModal, paymentOrderId, paymentTxnId, paymentFormHash]);
 
   const update = <K extends keyof GeneratorForm>(key: K, value: GeneratorForm[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -674,12 +709,18 @@ function GeneratorPage() {
   async function downloadWord() {
     setError("");
     const currentFormHash = await hashGeneratorForm(form);
-    const hasValidPaidOrder = Boolean(paymentVerifiedOrderId && paymentVerifiedFormHash && paymentVerifiedFormHash === currentFormHash);
+    const hasValidPaidOrder = Boolean(
+      paymentVerifiedOrderId &&
+      paymentVerifiedTxnId &&
+      paymentVerifiedProof &&
+      paymentVerifiedFormHash &&
+      paymentVerifiedFormHash === currentFormHash
+    );
 
     if (!hasValidPaidOrder) {
       if (showPaymentModal) return;
 
-      if (paymentOrderId && paymentUrl && paymentFormHash === currentFormHash) {
+      if (paymentOrderId && paymentTxnId && paymentUrl && paymentFormHash === currentFormHash) {
         setShowPaymentModal(true);
         setPaymentMessage("Lanjutkan pembayaran pada jendela pembayaran di bawah.");
         return;
@@ -692,15 +733,16 @@ function GeneratorPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ form_hash: currentFormHash }),
         });
-        const result = await response.json().catch(() => null) as { success?: boolean; payment_url?: string; order_id?: string; message?: string } | null;
+        const result = await response.json().catch(() => null) as { success?: boolean; payment_url?: string; order_id?: string; txn_id?: string; message?: string } | null;
 
-        if (!response.ok || !result?.success || !result.payment_url || !result.order_id) {
+        if (!response.ok || !result?.success || !result.payment_url || !result.order_id || !result.txn_id) {
           throw new Error(result?.message || "Gagal membuat transaksi pembayaran.");
         }
 
         paymentHandledRef.current = false;
         setPaymentOrderId(result.order_id);
         setPaymentFormHash(currentFormHash);
+        setPaymentTxnId(result.txn_id);
         setPaymentUrl(result.payment_url);
         setShowPaymentModal(true);
         setPaymentMessage("Silakan selesaikan pembayaran di jendela ini. SIGMA akan memverifikasi otomatis setelah pembayaran selesai.");
@@ -711,8 +753,8 @@ function GeneratorPage() {
     }
 
     try {
-      const fullMarkdown = await loadPaidModule(paymentVerifiedOrderId, currentFormHash);
-      downloadWordFromServer(fullMarkdown, paymentVerifiedOrderId, currentFormHash);
+      const fullMarkdown = await loadPaidModule(paymentVerifiedOrderId, paymentVerifiedTxnId, currentFormHash, paymentVerifiedProof);
+      await downloadWordFromServer(fullMarkdown, paymentVerifiedOrderId, paymentVerifiedTxnId, currentFormHash, paymentVerifiedProof);
       setDownloadSuccess(true);
       setPaymentMessage("");
     } catch {
@@ -1006,6 +1048,7 @@ function GeneratorPage() {
         <PaymentModal
           paymentUrl={paymentUrl}
           orderId={paymentOrderId}
+          txnId={paymentTxnId}
           checking={paymentChecking}
           message={paymentMessage}
           onClose={() => setShowPaymentModal(false)}
@@ -1142,7 +1185,7 @@ function TemplateModal({ onClose }: { onClose: () => void }) {
   return <ModalShell title="Pratinjau Struktur Template Default" onClose={onClose}><pre className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50 p-3.5 font-mono text-sm leading-relaxed text-slate-700">{DEFAULT_TEMPLATE}</pre><div className="mt-6 border-t border-slate-200 pt-5 text-right"><button type="button" onClick={onClose} className="rounded-xl bg-blue-600 px-6 py-2.5 font-bold text-white hover:bg-blue-700">Tutup</button></div></ModalShell>;
 }
 
-function PaymentModal({ paymentUrl, orderId, checking, message, onClose }: { paymentUrl: string; orderId: string; checking: boolean; message: string; onClose: () => void }) {
+function PaymentModal({ paymentUrl, orderId, txnId, checking, message, onClose }: { paymentUrl: string; orderId: string; txnId: string; checking: boolean; message: string; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-3 backdrop-blur-sm sm:p-5">
       <div className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10">
@@ -1156,6 +1199,7 @@ function PaymentModal({ paymentUrl, orderId, checking, message, onClose }: { pay
               </div>
             </div>
             <p className="mt-1 truncate text-[11px] text-slate-400">Order ID: {orderId}</p>
+            <p className="truncate text-[10px] text-slate-400">Transaction ID: {txnId}</p>
           </div>
           <button type="button" onClick={onClose} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-slate-500 hover:border-red-200 hover:text-red-500" aria-label="Tutup pembayaran">✕</button>
         </div>
