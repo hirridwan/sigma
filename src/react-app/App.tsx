@@ -1135,21 +1135,5 @@ function DummyPreviewPage() {
   return <div className="min-h-screen bg-slate-50 p-4 md:p-8"><div className="mx-auto max-w-4xl"><button type="button" onClick={() => navigate("/modul-ajar")} className="mb-6 text-blue-600 hover:text-blue-800">← Kembali ke Form Generator</button><div className="mb-12 rounded-2xl border border-blue-100 bg-white shadow-lg"><div className="flex flex-col items-center justify-between gap-4 rounded-t-2xl border-b border-slate-100 bg-gradient-to-r from-blue-50 to-white p-6 sm:flex-row"><h2 className="text-xl font-extrabold text-blue-900">📄 Pratinjau Dummy</h2><div className="flex flex-wrap gap-3"><select value={theme} onChange={(e) => setTheme(e.target.value as ThemeKey)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium"><option value="blue">Warna: Biru</option><option value="emerald">Warna: Hijau</option><option value="purple">Warna: Ungu</option><option value="slate">Warna: Abu-abu</option></select><button onClick={downloadWord} className="rounded-xl bg-green-600 px-4 py-2.5 text-sm font-bold text-white">Word</button><button onClick={downloadPdf} className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white">PDF</button></div></div><div id="dummy-content" className="document-preview rounded-b-2xl bg-white p-8 md:p-12" style={{ "--sigma-theme": color } as CSSProperties} dangerouslySetInnerHTML={{ __html: `<div class='cover-page'><h1 style='border:none;color:${color};font-size:32pt'>MODUL AJAR</h1><div class='mx-auto mt-44 inline-block min-w-[320px] border-t-2 pt-10 text-left text-[14pt]' style='border-color:${color}'><p><b>Nama Penyusun:</b> Ridwan Maulana</p><p><b>Fase / Kelas / Jenjang Sekolah:</b> Fase E: Kelas 10 SMA / SMK / MA</p></div></div>${dummyHtml}` }} /></div></div></div>;
 }
 
-function escapeHtml(value: string) {
-  return value.replace(/[&<>"']/g, (character) => {
-    const entities: Record<string, string> = {
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    };
-    return entities[character] ?? character;
-  });
-}
-
-function slugify(value: string) {
-  return value.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").slice(0, 60) || "sigma";
-}
 
 export default App;

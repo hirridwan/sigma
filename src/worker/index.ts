@@ -147,7 +147,7 @@ function slugifyServer(value: string): string {
 
 function buildWordDocument(markdown: string, author: string, phase: string, theme: string): string {
   const colorHex = WORD_THEME_COLORS[theme] || WORD_THEME_COLORS.blue;
-  const markdownHtml = marked.parse(markdown, { async: false, gfm: true, breaks: false, html: false }) as string;
+  const markdownHtml = marked.parse(markdown, { async: false, gfm: true, breaks: false }) as string;
 
   return `<!DOCTYPE html>
 <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
