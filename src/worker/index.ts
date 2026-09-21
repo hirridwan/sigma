@@ -413,11 +413,6 @@ async function verifyPakasirTransactionDetailed(
   };
 }
 
-async function verifyPakasirTransaction(c: any, txnId: string, expectedOrderId?: string): Promise<boolean> {
-  const result = await verifyPakasirTransactionDetailed(c, txnId, expectedOrderId);
-  return result.paid;
-}
-
 function buildDefaultStructure(): string {
   return `Gunakan urutan heading dan komponen berikut secara KETAT. Jangan mengubah urutan bagian utama:
 
