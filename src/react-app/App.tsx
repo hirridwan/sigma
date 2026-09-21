@@ -121,6 +121,15 @@ function navigate(path: string) {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
+function slugify(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "SIGMA";
+}
+
 async function hashGeneratorForm(form: GeneratorForm): Promise<string> {
   const normalized = JSON.stringify(
     Object.keys(form)
