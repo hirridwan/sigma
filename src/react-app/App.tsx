@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type ReactNode, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type ReactNode, type CSSProperties, type ClipboardEvent, type KeyboardEvent } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import html2pdf from "html2pdf.js";
@@ -8,7 +8,7 @@ const DRAFT_KEY = "sigma:generator-draft:v4";
 const WHATSAPP_NUMBER = "6285860565852";
 const MAX_REFERENCE_FILE_BYTES = 15 * 1024 * 1024;
 const PAYMENT_AMOUNT = 5000;
-const PAYMENT_RESULT_KEY = "sigma:payment:verified";
+const PAYMENT_RESULT_KEY = "sigma:payment:verified:v2";
 const OFFICIAL_CP_REFERENCE_URL = "https://uploads.belajar.id/document/files/Kepka_BSKAP_No_01k17e8396ajn15j3hcw0k773b.pdf";
 
 const THEME_COLORS = {
@@ -242,12 +242,27 @@ function GeneratorPage() {
     try {
       const saved = localStorage.getItem(PAYMENT_RESULT_KEY);
       if (!saved) return "";
-      const parsed = JSON.parse(saved) as { orderId?: string };
-      return parsed.orderId || "";
+      const parsed = JSON.parse(saved) as { orderId?: string; formHash?: string };
+      return parsed.orderId && parsed.formHash ? parsed.orderId : "";
     } catch {
       return "";
     }
   });
+  const [paymentVerifiedFormHash, setPaymentVerifiedFormHash] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(PAYMENT_RESULT_KEY);
+      if (!saved) return "";
+      const parsed = JSON.parse(saved) as { orderId?: string; formHash?: string };
+      return parsed.orderId && parsed.formHash ? parsed.formHash : "";
+    } catch {
+      return "";
+    }
+  });
+  const [paymentOrderId, setPaymentOrderId] = useState("");
+  const [paymentFormHash, setPaymentFormHash] = useState("");
+  const [paymentUrl, setPaymentUrl] = useState("");
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentChecking, setPaymentChecking] = useState(false);
   const [paymentMessage, setPaymentMessage] = useState("");
 
   const colorHex = THEME_COLORS[form.warna_tema];
@@ -270,9 +285,10 @@ function GeneratorPage() {
     const handleStorage = (event: StorageEvent) => {
       if (event.key !== PAYMENT_RESULT_KEY || !event.newValue) return;
       try {
-        const payment = JSON.parse(event.newValue) as { orderId?: string; verifiedAt?: number };
-        if (payment.orderId) {
+        const payment = JSON.parse(event.newValue) as { orderId?: string; formHash?: string; verifiedAt?: number };
+        if (payment.orderId && payment.formHash) {
           setPaymentVerifiedOrderId(payment.orderId);
+          setPaymentVerifiedFormHash(payment.formHash);
           setPaymentMessage("Pembayaran berhasil diverifikasi. Klik Word untuk mengunduh modul lengkap.");
         }
       } catch {
@@ -284,44 +300,266 @@ function GeneratorPage() {
     return () => window.removeEventListener("storage", handleStorage);
   }, []);
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("payment") !== "success") return;
+  function clearPaymentState() {
+    setPaymentVerifiedOrderId("");
+    setPaymentVerifiedFormHash("");
+    setPaymentOrderId("");
+    setPaymentFormHash("");
+    setPaymentUrl("");
+    setShowPaymentModal(false);
+    localStorage.removeItem(PAYMENT_RESULT_KEY);
+  }
 
-    const orderId = params.get("order_id")?.trim();
-    if (!orderId) return;
+  function blockPreviewCopy(event: ClipboardEvent<HTMLDivElement>) {
+    event.preventDefault();
+  }
+
+  function blockPreviewKeydown(event: KeyboardEvent<HTMLDivElement>) {
+    const key = event.key.toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && ["a", "c", "x", "v"].includes(key)) {
+      event.preventDefault();
+    }
+  }
+
+  function buildWordBlob(markdown: string): Blob {
+    const markdownHtml = DOMPurify.sanitize(marked.parse(markdown, { async: false }));
+    const source = document.createElement("div");
+    source.className = "document-preview";
+    source.innerHTML = `
+      <div class="cover-page" style="margin:0;padding:0;min-height:230mm;text-align:center;border:0;box-shadow:none;">
+        <h1 style="margin:0;padding-top:60mm;border:0;color:${colorHex};font-size:25pt;font-family:'Times New Roman',Times,serif;font-weight:bold;">MODUL AJAR</h1>
+        <div style="margin:24mm auto 0;display:inline-block;min-width:260px;border-top:2px solid ${colorHex};padding-top:5mm;text-align:left;font-family:'Times New Roman',Times,serif;font-size:12pt;line-height:150%;">
+          <p style="margin:0;padding:0;"><b>Nama Penyusun:</b> ${escapeHtml(form.nama_penyusun)}</p>
+          <p style="margin:0;padding:0;"><b>Fase / Kelas / Jenjang Sekolah:</b> ${escapeHtml(form.fase_kelas_jenjang)}</p>
+        </div>
+      </div>
+      <div>${markdownHtml}</div>
+    `;
+
+    const exportElement = source.cloneNode(true) as HTMLElement;
+    exportElement.querySelectorAll("hr").forEach((node) => node.remove());
+
+    exportElement.querySelectorAll<HTMLElement>("h1, h2, h3, h4").forEach((heading) => {
+      const replacement = document.createElement("p");
+      replacement.className = heading.tagName === "H1" || heading.tagName === "H2" ? "SigmaHeading14" : "SigmaHeading12";
+      replacement.innerHTML = heading.innerHTML;
+      replacement.style.border = "0";
+      replacement.style.boxShadow = "none";
+      replacement.style.margin = "0";
+      replacement.style.padding = "0";
+      replacement.style.textIndent = "0";
+      replacement.style.textAlign = heading.style.textAlign || "";
+      replacement.style.color = colorHex;
+      replacement.style.fontFamily = "'Times New Roman', Times, serif";
+      replacement.style.fontWeight = "bold";
+      replacement.style.lineHeight = "150%";
+      replacement.style.fontSize = heading.tagName === "H1" || heading.tagName === "H2" ? "14pt" : "12pt";
+      heading.replaceWith(replacement);
+    });
+
+    const normalizeList = (list: HTMLElement): DocumentFragment => {
+      const fragment = document.createDocumentFragment();
+      const ordered = list.tagName.toLowerCase() === "ol";
+      let number = 1;
+
+      Array.from(list.children).forEach((child) => {
+        if (!(child instanceof HTMLElement) || child.tagName.toLowerCase() !== "li") return;
+        const li = child as HTMLElement;
+        const nestedLists = Array.from(li.children).filter(
+          (node) => node instanceof HTMLElement && ["ul", "ol"].includes(node.tagName.toLowerCase()),
+        ) as HTMLElement[];
+
+        nestedLists.forEach((nested) => nested.remove());
+
+        const paragraph = document.createElement("p");
+        paragraph.className = "SigmaBody";
+        paragraph.style.margin = "0";
+        paragraph.style.padding = "0";
+        paragraph.style.textIndent = "0";
+        paragraph.style.lineHeight = "150%";
+        paragraph.style.fontFamily = "'Times New Roman', Times, serif";
+        paragraph.style.fontSize = "12pt";
+        paragraph.innerHTML = `${ordered ? `${number}.` : "•"} ${li.innerHTML}`;
+        fragment.appendChild(paragraph);
+
+        nestedLists.forEach((nested) => fragment.appendChild(normalizeList(nested)));
+        number += 1;
+      });
+
+      return fragment;
+    };
+
+    exportElement.querySelectorAll<HTMLElement>("ul, ol").forEach((list) => {
+      if (list.parentElement?.closest("ul, ol")) return;
+      list.replaceWith(normalizeList(list));
+    });
+
+    const cover = exportElement.querySelector(".cover-page") as HTMLElement | null;
+    if (cover) {
+      cover.style.pageBreakAfter = "always";
+      cover.style.breakAfter = "page";
+      cover.style.margin = "0";
+      cover.style.padding = "0";
+      cover.style.border = "0";
+      cover.style.boxShadow = "none";
+      cover.style.minHeight = "230mm";
+      cover.style.display = "block";
+      cover.style.textAlign = "center";
+      cover.querySelectorAll<HTMLElement>("*").forEach((node) => {
+        node.style.borderLeft = "0";
+        node.style.borderRight = "0";
+        node.style.boxShadow = "none";
+        node.style.marginLeft = "0";
+        node.style.marginRight = "0";
+        node.style.textIndent = "0";
+      });
+    }
+
+    exportElement.querySelectorAll<HTMLElement>("*").forEach((node) => {
+      if (node.closest("table")) return;
+      node.style.boxShadow = "none";
+      if (!node.classList.contains("cover-page")) {
+        node.style.borderTop = "0";
+        node.style.borderBottom = "0";
+        node.style.borderLeft = "0";
+        node.style.borderRight = "0";
+      }
+    });
+
+    const html = `<!DOCTYPE html>
+<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+<head>
+<meta charset='utf-8'>
+<title>Modul Ajar SIGMA</title>
+<style>
+@page WordSection1 { size: 21cm 29.7cm; margin: 2.5cm 2cm 2.5cm 3cm; mso-page-orientation: portrait; }
+div.WordSection1 { page: WordSection1; }
+html, body { margin:0 !important; padding:0 !important; font-family:'Times New Roman', Times, serif !important; font-size:12pt !important; line-height:150% !important; color:#000 !important; }
+p, div, li { font-family:'Times New Roman', Times, serif !important; font-size:12pt; line-height:150%; margin:0 !important; padding:0 !important; margin-left:0 !important; margin-right:0 !important; text-indent:0 !important; mso-margin-top-alt:0 !important; mso-margin-bottom-alt:0 !important; mso-para-margin-left:0 !important; mso-para-margin-right:0 !important; }
+p.SigmaBody { font-size:12pt !important; line-height:150% !important; margin:0 !important; padding:0 !important; text-indent:0 !important; }
+p.SigmaHeading14 { font-size:14pt !important; font-weight:bold !important; line-height:150% !important; color:${colorHex} !important; margin:0 !important; padding:0 !important; text-indent:0 !important; border:0 !important; box-shadow:none !important; text-decoration:none !important; mso-margin-top-alt:0 !important; mso-margin-bottom-alt:0 !important; mso-para-margin-left:0 !important; mso-para-margin-right:0 !important; }
+p.SigmaHeading12 { font-size:12pt !important; font-weight:bold !important; line-height:150% !important; color:${colorHex} !important; margin:0 !important; padding:0 !important; text-indent:0 !important; border:0 !important; box-shadow:none !important; text-decoration:none !important; mso-margin-top-alt:0 !important; mso-margin-bottom-alt:0 !important; mso-para-margin-left:0 !important; mso-para-margin-right:0 !important; }
+.cover-page { page-break-after:always !important; break-after:page !important; text-align:center !important; margin:0 !important; padding:0 !important; min-height:230mm !important; border:0 !important; box-shadow:none !important; }
+.document-preview { margin:0 !important; padding:0 !important; }
+ul, ol { list-style:none !important; margin:0 !important; padding:0 !important; }
+table { border-collapse:collapse; width:100%; margin:0 !important; padding:0 !important; page-break-inside:auto; }
+tr { page-break-inside:avoid; page-break-after:auto; }
+th, td { border:1px solid #000; padding:6pt; vertical-align:top; font-family:'Times New Roman', Times, serif !important; font-size:12pt !important; line-height:150% !important; margin:0 !important; text-indent:0 !important; }
+a { color:#000 !important; text-decoration:none !important; }
+</style>
+</head>
+<body><div class='WordSection1'>${exportElement.innerHTML}</div></body></html>`;
+
+    return new Blob(["\ufeff", html], { type: "application/msword" });
+  }
+
+  function saveWordBlob(blob: Blob) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `Modul-Ajar-${slugify(form.mata_pelajaran || "SIGMA")}.doc`;
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+
+  async function loadPaidModule(orderId: string, formHash: string, autoDownload = false) {
+    setError("");
+    setPaymentMessage("Menyiapkan modul lengkap...");
+
+    try {
+      const payload = new FormData();
+      for (const [key, value] of Object.entries(form)) payload.append(key, value);
+      payload.append("model_pembelajaran", form.praktik_pedagogis);
+      payload.append("jenis_asesmen", [
+        `Awal: ${form.asesmen_awal}`,
+        `Proses: ${form.asesmen_proses}`,
+        `Akhir: ${form.asesmen_akhir}`,
+      ].join("; "));
+      payload.append("paid_download", "true");
+      payload.append("order_id", orderId);
+      payload.append("form_hash", formHash);
+
+      if (referenceFile) {
+        payload.append("reference_file", referenceFile, referenceFile.name);
+        payload.append("reference_file_name", referenceFile.name);
+
+        if (referenceFile.name.toLowerCase().endsWith(".docx")) {
+          const arrayBuffer = await referenceFile.arrayBuffer();
+          const extraction = await mammoth.extractRawText({ arrayBuffer });
+          payload.append("reference_text", extraction.value.slice(0, 120000));
+        } else if (referenceFile.name.toLowerCase().endsWith(".txt")) {
+          payload.append("reference_text", (await referenceFile.text()).slice(0, 120000));
+        }
+      }
+
+      const response = await fetch("/api/generate", { method: "POST", body: payload });
+      const result = await response.json().catch(() => null) as { success?: boolean; data?: string; message?: string } | null;
+
+      if (!response.ok || !result?.success || !result.data) {
+        throw new Error(result?.message || `Gagal menyiapkan modul (${response.status}).`);
+      }
+
+      setResultMarkdown(result.data);
+      setPaymentMessage(autoDownload ? "Pembayaran berhasil. Modul lengkap sedang diunduh..." : "Pembayaran berhasil diverifikasi. Modul lengkap sudah tersedia.");
+
+      if (autoDownload) {
+        saveWordBlob(buildWordBlob(result.data));
+        setPaymentMessage("Pembayaran berhasil. Modul lengkap berhasil diunduh.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal menyiapkan modul lengkap.");
+      throw err;
+    }
+  }
+
+  useEffect(() => {
+    if (!showPaymentModal || !paymentOrderId || !paymentFormHash) return;
 
     let cancelled = false;
+    let inFlight = false;
 
-    const verify = async () => {
-      setPaymentMessage("Memverifikasi pembayaran...");
+    const checkPayment = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      setPaymentChecking(true);
       try {
-        const response = await fetch(`/api/payment/verify?order_id=${encodeURIComponent(orderId)}`);
+        const response = await fetch(`/api/payment/verify?order_id=${encodeURIComponent(paymentOrderId)}`);
         const result = await response.json().catch(() => null) as { success?: boolean; paid?: boolean; message?: string } | null;
-
         if (cancelled) return;
 
-        if (!response.ok || !result?.success) {
-          throw new Error(result?.message || "Gagal memverifikasi pembayaran.");
+        if (response.ok && result?.success && result.paid) {
+          setPaymentVerifiedOrderId(paymentOrderId);
+          setPaymentVerifiedFormHash(paymentFormHash);
+          localStorage.setItem(PAYMENT_RESULT_KEY, JSON.stringify({ orderId: paymentOrderId, formHash: paymentFormHash, verifiedAt: Date.now() }));
+          setShowPaymentModal(false);
+          setPaymentMessage("Pembayaran berhasil diverifikasi. Menyiapkan modul lengkap...");
+          try {
+            await loadPaidModule(paymentOrderId, paymentFormHash, true);
+            setPaymentOrderId("");
+            setPaymentFormHash("");
+            setPaymentUrl("");
+          } catch {
+            // Error already displayed.
+          }
         }
-
-        if (result.paid) {
-          setPaymentVerifiedOrderId(orderId);
-          setPaymentMessage("Pembayaran berhasil diverifikasi. Kembali ke tab SIGMA sebelumnya, lalu klik Word.");
-          localStorage.setItem(PAYMENT_RESULT_KEY, JSON.stringify({ orderId, verifiedAt: Date.now() }));
-        } else {
-          setPaymentMessage("Pembayaran belum terverifikasi. Jika kamu baru saja membayar, tunggu beberapa saat lalu coba lagi.");
-        }
-      } catch (err) {
-        if (!cancelled) setPaymentMessage(err instanceof Error ? err.message : "Gagal memverifikasi pembayaran.");
+      } catch (error) {
+        if (!cancelled) setPaymentMessage(error instanceof Error ? error.message : "Sedang menunggu verifikasi pembayaran...");
       } finally {
-        window.history.replaceState({}, "", "/modul-ajar");
+        inFlight = false;
+        if (!cancelled) setPaymentChecking(false);
       }
     };
 
-    void verify();
-    return () => { cancelled = true; };
-  }, []);
+    void checkPayment();
+    const interval = window.setInterval(() => void checkPayment(), 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [showPaymentModal, paymentOrderId, paymentFormHash]);
 
   const update = <K extends keyof GeneratorForm>(key: K, value: GeneratorForm[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -439,7 +677,9 @@ function GeneratorPage() {
         throw new Error(result?.message || `Request gagal (${response.status}).`);
       }
 
+      clearPaymentState();
       setResultMarkdown(result.data || "");
+      setPaymentMessage("");
       setTimeout(() => document.getElementById("hasil")?.scrollIntoView({ behavior: "smooth" }), 50);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Koneksi API gagal.");
@@ -457,226 +697,51 @@ function GeneratorPage() {
     setResultMarkdown("");
     setError("");
     localStorage.removeItem(DRAFT_KEY);
+    clearPaymentState();
   }
 
   async function downloadWord() {
     setError("");
+    const currentFormHash = await hashGeneratorForm(form);
+    const hasValidPaidOrder = Boolean(paymentVerifiedOrderId && paymentVerifiedFormHash && paymentVerifiedFormHash === currentFormHash);
 
-    if (!paymentVerifiedOrderId) {
+    if (!hasValidPaidOrder) {
+      if (showPaymentModal) return;
+
+      if (paymentOrderId && paymentUrl && paymentFormHash === currentFormHash) {
+        setShowPaymentModal(true);
+        setPaymentMessage("Lanjutkan pembayaran pada jendela pembayaran di bawah.");
+        return;
+      }
+
       try {
         setPaymentMessage(`Membuka pembayaran sebesar Rp${PAYMENT_AMOUNT.toLocaleString("id-ID")}...`);
-        const formHash = await hashGeneratorForm(form);
         const response = await fetch("/api/payment/create", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ form_hash: formHash }),
+          body: JSON.stringify({ form_hash: currentFormHash }),
         });
-        const result = await response.json().catch(() => null) as { success?: boolean; payment_url?: string; message?: string } | null;
+        const result = await response.json().catch(() => null) as { success?: boolean; payment_url?: string; order_id?: string; message?: string } | null;
 
-        if (!response.ok || !result?.success || !result.payment_url) {
+        if (!response.ok || !result?.success || !result.payment_url || !result.order_id) {
           throw new Error(result?.message || "Gagal membuat transaksi pembayaran.");
         }
 
-        const paymentWindow = window.open(result.payment_url, "_blank", "noopener,noreferrer");
-        if (!paymentWindow) {
-          window.location.assign(result.payment_url);
-          return;
-        }
-
-        setPaymentMessage("Halaman pembayaran dibuka di tab baru. Setelah selesai, kembali ke tab SIGMA ini.");
+        setPaymentOrderId(result.order_id);
+        setPaymentFormHash(currentFormHash);
+        setPaymentUrl(result.payment_url);
+        setShowPaymentModal(true);
+        setPaymentMessage("Silakan selesaikan pembayaran di jendela ini. SIGMA akan memverifikasi otomatis setelah pembayaran selesai.");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Gagal membuka pembayaran.");
       }
       return;
     }
 
-    const element = document.getElementById("hasil-content");
-    if (!element) {
-      setError("Konten modul belum tersedia untuk diekspor.");
-      return;
-    }
-
     try {
-      const payload = new FormData();
-      for (const [key, value] of Object.entries(form)) payload.append(key, value);
-      payload.append("model_pembelajaran", form.praktik_pedagogis);
-      payload.append("jenis_asesmen", [
-        `Awal: ${form.asesmen_awal}`,
-        `Proses: ${form.asesmen_proses}`,
-        `Akhir: ${form.asesmen_akhir}`,
-      ].join("; "));
-      payload.append("paid_download", "true");
-      payload.append("order_id", paymentVerifiedOrderId);
-      payload.append("form_hash", await hashGeneratorForm(form));
-
-      if (referenceFile) {
-        payload.append("reference_file", referenceFile, referenceFile.name);
-        payload.append("reference_file_name", referenceFile.name);
-
-        if (referenceFile.name.toLowerCase().endsWith(".docx")) {
-          const arrayBuffer = await referenceFile.arrayBuffer();
-          const extraction = await mammoth.extractRawText({ arrayBuffer });
-          payload.append("reference_text", extraction.value.slice(0, 120000));
-        } else if (referenceFile.name.toLowerCase().endsWith(".txt")) {
-          payload.append("reference_text", (await referenceFile.text()).slice(0, 120000));
-        }
-      }
-
-      setPaymentMessage("Menyiapkan modul lengkap...");
-      const response = await fetch("/api/generate", { method: "POST", body: payload });
-      const result = await response.json().catch(() => null) as { success?: boolean; data?: string; message?: string } | null;
-
-      if (!response.ok || !result?.success || !result.data) {
-        throw new Error(result?.message || `Gagal menyiapkan modul (${response.status}).`);
-      }
-
-      setResultMarkdown(result.data);
-
-      window.setTimeout(() => {
-        const fullElement = document.getElementById("hasil-content");
-        if (!fullElement) {
-          setError("Konten modul lengkap belum siap untuk diekspor.");
-          return;
-        }
-
-        try {
-          const exportElement = fullElement.cloneNode(true) as HTMLElement;
-          exportElement.querySelectorAll("hr").forEach((node) => node.remove());
-
-          exportElement.querySelectorAll<HTMLElement>("h1, h2, h3, h4").forEach((heading) => {
-            const replacement = document.createElement("p");
-            replacement.className = heading.tagName === "H1" || heading.tagName === "H2" ? "SigmaHeading14" : "SigmaHeading12";
-            replacement.innerHTML = heading.innerHTML;
-            replacement.style.border = "0";
-            replacement.style.boxShadow = "none";
-            replacement.style.margin = "0";
-            replacement.style.padding = "0";
-            replacement.style.textIndent = "0";
-            replacement.style.textAlign = heading.style.textAlign || "";
-            replacement.style.color = colorHex;
-            replacement.style.fontFamily = "'Times New Roman', Times, serif";
-            replacement.style.fontWeight = "bold";
-            replacement.style.lineHeight = "150%";
-            replacement.style.fontSize = heading.tagName === "H1" || heading.tagName === "H2" ? "14pt" : "12pt";
-            heading.replaceWith(replacement);
-          });
-
-          const normalizeList = (list: HTMLElement): DocumentFragment => {
-            const fragment = document.createDocumentFragment();
-            const ordered = list.tagName.toLowerCase() === "ol";
-            let number = 1;
-
-            Array.from(list.children).forEach((child) => {
-              if (!(child instanceof HTMLElement) || child.tagName.toLowerCase() !== "li") return;
-              const li = child as HTMLElement;
-              const nestedLists = Array.from(li.children).filter(
-                (node) => node instanceof HTMLElement && ["ul", "ol"].includes(node.tagName.toLowerCase()),
-              ) as HTMLElement[];
-
-              nestedLists.forEach((nested) => nested.remove());
-
-              const paragraph = document.createElement("p");
-              paragraph.className = "SigmaBody";
-              paragraph.style.margin = "0";
-              paragraph.style.padding = "0";
-              paragraph.style.textIndent = "0";
-              paragraph.style.lineHeight = "150%";
-              paragraph.style.fontFamily = "'Times New Roman', Times, serif";
-              paragraph.style.fontSize = "12pt";
-              paragraph.innerHTML = `${ordered ? `${number}.` : "•"} ${li.innerHTML}`;
-              fragment.appendChild(paragraph);
-
-              nestedLists.forEach((nested) => fragment.appendChild(normalizeList(nested)));
-              number += 1;
-            });
-
-            return fragment;
-          };
-
-          exportElement.querySelectorAll<HTMLElement>("ul, ol").forEach((list) => {
-            if (list.parentElement?.closest("ul, ol")) return;
-            list.replaceWith(normalizeList(list));
-          });
-
-          const cover = exportElement.querySelector(".cover-page") as HTMLElement | null;
-          if (cover) {
-            cover.style.pageBreakAfter = "always";
-            cover.style.breakAfter = "page";
-            cover.style.margin = "0";
-            cover.style.padding = "0";
-            cover.style.border = "0";
-            cover.style.boxShadow = "none";
-            cover.style.minHeight = "230mm";
-            cover.style.display = "block";
-            cover.style.textAlign = "center";
-            cover.querySelectorAll<HTMLElement>("*").forEach((node) => {
-              node.style.borderTop = "0";
-              node.style.borderBottom = "0";
-              node.style.borderLeft = "0";
-              node.style.borderRight = "0";
-              node.style.boxShadow = "none";
-              node.style.marginLeft = "0";
-              node.style.marginRight = "0";
-              node.style.textIndent = "0";
-            });
-
-            const coverTitle = cover.querySelector("p.SigmaHeading14") as HTMLElement | null;
-            if (coverTitle) coverTitle.style.paddingTop = "60mm";
-            else cover.querySelectorAll<HTMLElement>("p")[0]?.style.setProperty("padding-top", "60mm");
-          }
-
-          exportElement.querySelectorAll<HTMLElement>("*").forEach((node) => {
-            if (node.closest("table")) return;
-            node.style.boxShadow = "none";
-            if (!node.classList.contains("cover-page")) {
-              node.style.borderTop = "0";
-              node.style.borderBottom = "0";
-              node.style.borderLeft = "0";
-              node.style.borderRight = "0";
-            }
-          });
-
-          const html = `<!DOCTYPE html>
-<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-<head>
-<meta charset='utf-8'>
-<title>Modul Ajar SIGMA</title>
-<style>
-@page WordSection1 { size: 21cm 29.7cm; margin: 2.5cm 2cm 2.5cm 3cm; mso-page-orientation: portrait; }
-div.WordSection1 { page: WordSection1; }
-html, body { margin:0 !important; padding:0 !important; font-family:'Times New Roman', Times, serif !important; font-size:12pt !important; line-height:150% !important; color:#000 !important; }
-p, div, li { font-family:'Times New Roman', Times, serif !important; font-size:12pt; line-height:150%; margin:0 !important; padding:0 !important; margin-left:0 !important; margin-right:0 !important; text-indent:0 !important; mso-margin-top-alt:0 !important; mso-margin-bottom-alt:0 !important; mso-para-margin-left:0 !important; mso-para-margin-right:0 !important; }
-p.SigmaBody { font-size:12pt !important; line-height:150% !important; margin:0 !important; padding:0 !important; text-indent:0 !important; }
-p.SigmaHeading14 { font-size:14pt !important; font-weight:bold !important; line-height:150% !important; color:${colorHex} !important; margin:0 !important; padding:0 !important; text-indent:0 !important; border:0 !important; box-shadow:none !important; text-decoration:none !important; mso-margin-top-alt:0 !important; mso-margin-bottom-alt:0 !important; mso-para-margin-left:0 !important; mso-para-margin-right:0 !important; }
-p.SigmaHeading12 { font-size:12pt !important; font-weight:bold !important; line-height:150% !important; color:${colorHex} !important; margin:0 !important; padding:0 !important; text-indent:0 !important; border:0 !important; box-shadow:none !important; text-decoration:none !important; mso-margin-top-alt:0 !important; mso-margin-bottom-alt:0 !important; mso-para-margin-left:0 !important; mso-para-margin-right:0 !important; }
-.cover-page { page-break-after:always !important; break-after:page !important; text-align:center !important; margin:0 !important; padding:0 !important; min-height:230mm !important; border:0 !important; box-shadow:none !important; }
-.document-preview { margin:0 !important; padding:0 !important; }
-ul, ol { list-style:none !important; margin:0 !important; padding:0 !important; }
-table { border-collapse:collapse; width:100%; margin:0 !important; padding:0 !important; page-break-inside:auto; }
-tr { page-break-inside:avoid; page-break-after:auto; }
-th, td { border:1px solid #000; padding:6pt; vertical-align:top; font-family:'Times New Roman', Times, serif !important; font-size:12pt !important; line-height:150% !important; margin:0 !important; text-indent:0 !important; }
-a { color:#000 !important; text-decoration:none !important; }
-</style>
-</head>
-<body><div class='WordSection1'>${exportElement.innerHTML}</div></body></html>`;
-
-          const blob = new Blob(["\ufeff", html], { type: "application/msword" });
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement("a");
-          link.href = url;
-          link.download = `Modul-Ajar-${slugify(form.mata_pelajaran || "SIGMA")}.doc`;
-          link.style.display = "none";
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          window.setTimeout(() => URL.revokeObjectURL(url), 1500);
-          setPaymentMessage("Modul lengkap berhasil disiapkan dan diunduh.");
-        } catch (err) {
-          setError(err instanceof Error ? `Gagal membuat Word: ${err.message}` : "Gagal membuat Word.");
-        }
-      }, 150);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Gagal menyiapkan modul lengkap.");
+      await loadPaidModule(paymentVerifiedOrderId, currentFormHash, true);
+    } catch {
+      // Error message is already displayed by loadPaidModule.
     }
   }
 
@@ -910,14 +975,25 @@ a { color:#000 !important; text-decoration:none !important; }
         {resultMarkdown && (
           <section id="hasil-container" className="mb-8 flex min-h-[360px] flex-col rounded-xl border border-blue-100 bg-white shadow-lg">
             <div className="relative z-40 flex flex-col items-start justify-between gap-3 rounded-t-xl border-b border-slate-100 bg-gradient-to-r from-blue-50 to-white p-4 lg:flex-row lg:items-center">
-              <div><h2 className="flex items-center gap-2 text-lg font-extrabold text-blue-900">📄 Pratinjau Modul</h2><p className="mt-1 text-xs text-slate-500">Hasil dapat diedit dengan mengubah input lalu Regenerate.</p></div>
+              <div><h2 className="flex items-center gap-2 text-lg font-extrabold text-blue-900">📄 Pratinjau Modul</h2><p className="mt-1 text-xs leading-relaxed text-slate-500">Preview menampilkan struktur modul dengan isi yang disensor. Lakukan pembayaran Rp5.000 untuk melihat isi lengkap dan mengunduh Word.</p></div>
               <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-3 lg:w-auto">
                 <button type="button" onClick={editInput} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 sm:text-sm">Edit Input</button>
                 <button type="button" onClick={() => void generateModule(undefined, true)} disabled={isRegenerating} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-60 sm:text-sm">Regenerate</button>
                 <button type="button" onClick={downloadWord} className="rounded-lg bg-green-600 px-3 py-2 text-xs font-bold text-white hover:bg-green-700 sm:text-sm">Word</button>
               </div>
             </div>
-            <div id="hasil-content" className="document-preview max-w-none rounded-b-xl bg-white p-6 sm:p-8 md:p-10">
+            <div
+              id="hasil-content"
+              className="document-preview max-w-none select-none rounded-b-xl bg-white p-6 sm:p-8 md:p-10"
+              style={{ userSelect: "none", WebkitUserSelect: "none" } as CSSProperties}
+              onCopy={blockPreviewCopy}
+              onCut={blockPreviewCopy}
+              onPaste={blockPreviewCopy}
+              onContextMenu={(event) => event.preventDefault()}
+              onDragStart={(event) => event.preventDefault()}
+              onKeyDown={blockPreviewKeydown}
+              tabIndex={0}
+            >
               <div className="cover-page mb-16 text-center">
                 <h1 style={{ marginTop: 0, border: "none", color: colorHex, fontSize: "25pt" }}>MODUL AJAR</h1>
                 <div className="mx-auto mt-24 inline-block min-w-[260px] border-t-2 pt-5 text-left text-[12pt] leading-relaxed sm:text-[13pt]" style={{ borderColor: colorHex }}>
@@ -934,6 +1010,14 @@ a { color:#000 !important; text-decoration:none !important; }
       <FeedbackButton onClick={() => setShowFeedback(true)} />
       {showTemplateModal && <TemplateModal onClose={() => setShowTemplateModal(false)} />}
       {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} onSend={sendWhatsApp} />}
+      {showPaymentModal && paymentUrl && (
+        <PaymentModal
+          paymentUrl={paymentUrl}
+          orderId={paymentOrderId}
+          checking={paymentChecking}
+          onClose={() => setShowPaymentModal(false)}
+        />
+      )}
     </div>
   );
 }
@@ -1065,6 +1149,29 @@ function TemplateModal({ onClose }: { onClose: () => void }) {
   return <ModalShell title="Pratinjau Struktur Template Default" onClose={onClose}><pre className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50 p-3.5 font-mono text-sm leading-relaxed text-slate-700">{DEFAULT_TEMPLATE}</pre><div className="mt-6 border-t border-slate-200 pt-5 text-right"><button type="button" onClick={onClose} className="rounded-xl bg-blue-600 px-6 py-2.5 font-bold text-white hover:bg-blue-700">Tutup</button></div></ModalShell>;
 }
 
+function PaymentModal({ paymentUrl, orderId, checking, onClose }: { paymentUrl: string; orderId: string; checking: boolean; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-3 backdrop-blur-sm sm:p-5">
+      <div className="flex max-h-[95vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between gap-4 border-b border-slate-200 bg-blue-50 px-4 py-3 sm:px-5">
+          <div>
+            <h3 className="text-base font-extrabold text-blue-900 sm:text-lg">Pembayaran SIGMA · Rp5.000</h3>
+            <p className="mt-0.5 text-xs text-slate-500">Order ID: {orderId}</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-slate-500 hover:text-red-500" aria-label="Tutup pembayaran">✕</button>
+        </div>
+        <div className="flex items-center justify-between gap-3 border-b border-slate-100 bg-white px-4 py-2.5 sm:px-5">
+          <p className="text-xs font-medium text-slate-600">{checking ? "Memverifikasi pembayaran secara otomatis..." : "Selesaikan pembayaran di bawah. Tidak perlu membuka tab baru."}</p>
+          <span className="shrink-0 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700">Sandbox</span>
+        </div>
+        <div className="min-h-0 flex-1 overflow-hidden bg-slate-100">
+          <iframe src={paymentUrl} title="Pembayaran Pakasir" className="h-[72vh] w-full border-0 bg-white sm:h-[75vh]" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FeedbackModal({ onClose, onSend }: { onClose: () => void; onSend: (name: string, message: string) => void }) {
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
@@ -1086,6 +1193,19 @@ function DummyPreviewPage() {
   function downloadPdf() { const element = document.getElementById("dummy-content"); if (element) html2pdf().set({ margin: [40,30,30,40], filename: "Preview-Dummy-SIGMA.pdf", image: { type: "jpeg", quality: 0.98 }, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: "mm", format: "a4", orientation: "portrait" } }).from(element).save(); }
   function downloadWord() { const element = document.getElementById("dummy-content"); if (!element) return; const html = `<html><head><meta charset='utf-8'><style>body{font-family:'Times New Roman';font-size:12pt;line-height:1.5}h1,h2{color:${color}}table{border-collapse:collapse;width:100%}th,td{border:1px solid #000;padding:8px}</style></head><body>${element.innerHTML}</body></html>`; const blob = new Blob(["\ufeff", html], { type: "application/msword" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = "Preview-Dummy-SIGMA.doc"; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url); }
   return <div className="min-h-screen bg-slate-50 p-4 md:p-8"><div className="mx-auto max-w-4xl"><button type="button" onClick={() => navigate("/modul-ajar")} className="mb-6 text-blue-600 hover:text-blue-800">← Kembali ke Form Generator</button><div className="mb-12 rounded-2xl border border-blue-100 bg-white shadow-lg"><div className="flex flex-col items-center justify-between gap-4 rounded-t-2xl border-b border-slate-100 bg-gradient-to-r from-blue-50 to-white p-6 sm:flex-row"><h2 className="text-xl font-extrabold text-blue-900">📄 Pratinjau Dummy</h2><div className="flex flex-wrap gap-3"><select value={theme} onChange={(e) => setTheme(e.target.value as ThemeKey)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium"><option value="blue">Warna: Biru</option><option value="emerald">Warna: Hijau</option><option value="purple">Warna: Ungu</option><option value="slate">Warna: Abu-abu</option></select><button onClick={downloadWord} className="rounded-xl bg-green-600 px-4 py-2.5 text-sm font-bold text-white">Word</button><button onClick={downloadPdf} className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white">PDF</button></div></div><div id="dummy-content" className="document-preview rounded-b-2xl bg-white p-8 md:p-12" style={{ "--sigma-theme": color } as CSSProperties} dangerouslySetInnerHTML={{ __html: `<div class='cover-page'><h1 style='border:none;color:${color};font-size:32pt'>MODUL AJAR</h1><div class='mx-auto mt-44 inline-block min-w-[320px] border-t-2 pt-10 text-left text-[14pt]' style='border-color:${color}'><p><b>Nama Penyusun:</b> Ridwan Maulana</p><p><b>Fase / Kelas / Jenjang Sekolah:</b> Fase E: Kelas 10 SMA / SMK / MA</p></div></div>${dummyHtml}` }} /></div></div></div>;
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return entities[character] ?? character;
+  });
 }
 
 function slugify(value: string) {

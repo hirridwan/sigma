@@ -81,16 +81,42 @@ function buildReferenceSection(referenceUrl: string, referenceFileName: string):
   return `\n\n---\n\n## SUMBER REFERENSI\n\n${items.join("\n")}`;
 }
 
-function buildPreviewMarkdown(markdown: string): string {
+function censorPreviewLine(line: string): string {
+  const trimmed = line.trim();
+  if (!trimmed) return "";
+
+  if (/^#{1,6}\s+/.test(trimmed)) return line;
+  if (/^-{3,}\s*$/.test(trimmed)) return line;
+  if (/^[A-Z0-9][A-Z0-9\s/&().,:\-]{4,}$/.test(trimmed)) return line;
+  if (/^[A-Z]\.?\s+.+$/.test(trimmed) && !trimmed.includes(":")) return line;
+  if (/^\d+[.)]\s+.+$/.test(trimmed) && !trimmed.includes(":")) return line;
+
+  if (trimmed.startsWith("|")) {
+    if (/^\|[\s|:-]+\|$/.test(trimmed)) return line;
+    const cells = trimmed.slice(1, -1).split("|");
+    return `| ${cells.map(() => "••••••").join(" | ")} |`;
+  }
+
+  const bulletMatch = line.match(/^(\s*(?:[-*+]\s+|\d+[.)]\s+))/);
+  if (bulletMatch) return `${bulletMatch[1]}••••••••••`;
+
+  const labelMatch = line.match(/^(\s*(?:\*\*|__)?[^:\n]{1,80}(?:\*\*|__)?:)\s*/);
+  if (labelMatch) return `${labelMatch[1]} ••••••••••`;
+
+  if (/^>\s*/.test(trimmed)) return "> ••••••••••";
+
+  return "••••••••••••••••";
+}
+
+function buildSensoredPreviewMarkdown(markdown: string): string {
   const clean = markdown.trim();
-  const maxChars = 6500;
-  if (clean.length <= maxChars) return clean;
+  const preview = clean
+    .split(/\r?\n/)
+    .map(censorPreviewLine)
+    .join("\n")
+    .trim();
 
-  let preview = clean.slice(0, maxChars);
-  const lastBreak = preview.lastIndexOf("\n\n");
-  if (lastBreak > 2500) preview = preview.slice(0, lastBreak);
-
-  return `${preview.trim()}\n\n---\n\n## 🔒 MODUL LENGKAP TERKUNCI\n\nPratinjau ini hanya menampilkan sebagian isi modul. **Pembayaran diperlukan untuk mendapatkan modul lengkap dalam format Word.**`;
+  return `${preview}\n\n---\n\n## PEMBAYARAN UNTUK MELIHAT ISI LENGKAP\n\nPreview modul menampilkan seluruh struktur, tetapi isi detail **disensor**. Lakukan pembayaran **Rp5.000** untuk melihat isi lengkap dan mengunduh modul ajar dalam format Word.`;
 }
 
 async function verifyPakasirTransaction(c: any, orderId: string): Promise<boolean> {
@@ -250,11 +276,8 @@ app.post("/api/payment/create", async (c) => {
     }
 
     const orderId = `SIGMA-${formHash.slice(0, 16)}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-    const origin = new URL(c.req.url).origin;
-    const redirectUrl = `${origin}/modul-ajar?payment=success&order_id=${encodeURIComponent(orderId)}`;
     const paymentUrl = new URL(`https://app.pakasir.com/pay/${PAKASIR_SLUG}/${PAKASIR_AMOUNT}`);
     paymentUrl.searchParams.set("order_id", orderId);
-    paymentUrl.searchParams.set("redirect", redirectUrl);
 
     return c.json({
       success: true,
@@ -474,7 +497,7 @@ app.post("/api/generate", async (c) => {
       referenceUrl,
       referenceFileName,
     )}`;
-    const output = paidDownload ? dataWithReferences : buildPreviewMarkdown(dataWithReferences);
+    const output = paidDownload ? dataWithReferences : buildSensoredPreviewMarkdown(dataWithReferences);
 
     return c.json({
       success: true,
