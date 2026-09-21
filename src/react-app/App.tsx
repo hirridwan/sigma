@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type ReactNode, type CSSProperties, type ClipboardEvent, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode, type CSSProperties, type ClipboardEvent, type KeyboardEvent } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import html2pdf from "html2pdf.js";
@@ -265,6 +265,7 @@ function GeneratorPage() {
   const [paymentChecking, setPaymentChecking] = useState(false);
   const [paymentMessage, setPaymentMessage] = useState("");
   const [downloadSuccess, setDownloadSuccess] = useState(false);
+  const paymentHandledRef = useRef(false);
 
   const colorHex = THEME_COLORS[form.warna_tema];
 
@@ -311,6 +312,7 @@ function GeneratorPage() {
   }, []);
 
   function clearPaymentState() {
+    paymentHandledRef.current = false;
     setPaymentVerifiedOrderId("");
     setPaymentVerifiedFormHash("");
     setPaymentOrderId("");
@@ -420,6 +422,39 @@ function GeneratorPage() {
     }
   }
 
+  async function finalizePaidOrder(orderId: string, formHash: string) {
+    if (paymentHandledRef.current) return;
+    paymentHandledRef.current = true;
+
+    setPaymentVerifiedOrderId(orderId);
+    setPaymentVerifiedFormHash(formHash);
+    localStorage.setItem(PAYMENT_RESULT_KEY, JSON.stringify({
+      orderId,
+      formHash,
+      verifiedAt: Date.now(),
+    }));
+    setPaymentChecking(true);
+    setPaymentMessage("Pembayaran berhasil. Menyiapkan modul lengkap dan mengunduh Word...");
+    setShowPaymentModal(false);
+
+    try {
+      const fullMarkdown = await loadPaidModule(orderId, formHash);
+      await downloadWordFromServer(fullMarkdown, orderId, formHash);
+
+      setPaymentOrderId("");
+      setPaymentFormHash("");
+      setPaymentUrl("");
+      setPaymentMessage("");
+      setDownloadSuccess(true);
+      window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 50);
+    } catch (error) {
+      paymentHandledRef.current = false;
+      setPaymentMessage(error instanceof Error ? error.message : "Gagal mengunduh modul Word.");
+    } finally {
+      setPaymentChecking(false);
+    }
+  }
+
   useEffect(() => {
     if (!showPaymentModal || !paymentOrderId || !paymentFormHash) return;
 
@@ -446,41 +481,13 @@ function GeneratorPage() {
         if (cancelled) return;
 
         if (response.ok && result?.success && result.paid) {
-          const verifiedOrderId = paymentOrderId;
-          const verifiedFormHash = paymentFormHash;
-
-          setPaymentVerifiedOrderId(verifiedOrderId);
-          setPaymentVerifiedFormHash(verifiedFormHash);
-          localStorage.setItem(PAYMENT_RESULT_KEY, JSON.stringify({
-            orderId: verifiedOrderId,
-            formHash: verifiedFormHash,
-            verifiedAt: Date.now(),
-          }));
-          setPaymentMessage("Pembayaran berhasil. Menyiapkan modul lengkap dan mengunduh Word...");
-
-          // Pembayaran sudah terverifikasi. Tutup popup sekarang, lalu siapkan
-          // modul lengkap dan lakukan download di halaman SIGMA.
-          setShowPaymentModal(false);
-
-          try {
-            const fullMarkdown = await loadPaidModule(verifiedOrderId, verifiedFormHash);
-            await downloadWordFromServer(fullMarkdown, verifiedOrderId, verifiedFormHash);
-
-            setPaymentOrderId("");
-            setPaymentFormHash("");
-            setPaymentUrl("");
-            setPaymentMessage("");
-            setDownloadSuccess(true);
-            window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 50);
-          } catch (error) {
-            setPaymentMessage(error instanceof Error ? error.message : "Gagal mengunduh modul Word.");
-          }
+          await finalizePaidOrder(paymentOrderId, paymentFormHash);
         }
       } catch (error) {
         if (!cancelled) setPaymentMessage(error instanceof Error ? error.message : "Sedang menunggu verifikasi pembayaran...");
       } finally {
         inFlight = false;
-        if (!cancelled) setPaymentChecking(false);
+        if (!cancelled && showPaymentModal) setPaymentChecking(false);
       }
     };
 
@@ -491,6 +498,28 @@ function GeneratorPage() {
       window.clearInterval(interval);
     };
   }, [showPaymentModal, paymentOrderId, paymentFormHash]);
+
+  useEffect(() => {
+    const handlePaymentMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+
+      const data = event.data as {
+        source?: string;
+        type?: string;
+        orderId?: string;
+        formHash?: string;
+      } | null;
+
+      if (!data || data.source !== "sigma-pakasir" || data.type !== "SIGMA_PAYMENT_SUCCESS") return;
+      if (!paymentOrderId || !paymentFormHash) return;
+      if (data.orderId !== paymentOrderId || data.formHash !== paymentFormHash) return;
+
+      void finalizePaidOrder(data.orderId, data.formHash);
+    };
+
+    window.addEventListener("message", handlePaymentMessage);
+    return () => window.removeEventListener("message", handlePaymentMessage);
+  }, [paymentOrderId, paymentFormHash]);
 
   const update = <K extends keyof GeneratorForm>(key: K, value: GeneratorForm[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -660,6 +689,7 @@ function GeneratorPage() {
           throw new Error(result?.message || "Gagal membuat transaksi pembayaran.");
         }
 
+        paymentHandledRef.current = false;
         setPaymentOrderId(result.order_id);
         setPaymentFormHash(currentFormHash);
         setPaymentUrl(result.payment_url);

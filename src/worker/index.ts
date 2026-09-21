@@ -392,11 +392,17 @@ app.post("/api/payment/create", async (c) => {
 
     const orderId = `SIGMA-${formHash.slice(0, 16)}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
 
-    // Jangan kirim parameter redirect ke Pakasir.
-    // Setelah pembayaran selesai, halaman Pakasir tetap berada di dalam iframe
-    // sementara SIGMA memeriksa status transaksi dari parent secara berkala.
+    // Setelah pembayaran selesai, Pakasir diarahkan kembali ke callback SIGMA
+    // yang berada di dalam iframe. Callback akan memverifikasi transaksi
+    // lalu mengirim postMessage ke halaman SIGMA induk.
+    const origin = new URL(c.req.url).origin;
+    const callbackUrl = new URL("/api/payment/callback", origin);
+    callbackUrl.searchParams.set("order_id", orderId);
+    callbackUrl.searchParams.set("form_hash", formHash);
+
     const paymentUrl = new URL(`https://app.pakasir.com/pay/${PAKASIR_SLUG}/${PAKASIR_AMOUNT}`);
     paymentUrl.searchParams.set("order_id", orderId);
+    paymentUrl.searchParams.set("redirect", callbackUrl.toString());
 
     return c.json({
       success: true,
@@ -465,14 +471,18 @@ app.get("/api/payment/callback", async (c) => {
       return c.html(baseHtml("Pembayaran belum terverifikasi", "Silakan kembali ke SIGMA dan tunggu sampai status pembayaran selesai.", false), 402);
     }
 
-    return c.html(
-      baseHtml(
-        "Pembayaran berhasil",
-        "SIGMA sedang menyiapkan modul ajar dan akan mengunduh file Word secara otomatis.",
-        true,
-      ),
-      200,
-    );
+    return new Response(baseHtml(
+      "Pembayaran berhasil",
+      "SIGMA sedang menyiapkan modul ajar dan akan mengunduh file Word secara otomatis.",
+      true,
+    ), {
+      status: 200,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store, no-cache, must-revalidate, private",
+        "Pragma": "no-cache",
+      },
+    });
   } catch (error) {
     console.error("SIGMA /api/payment/callback error", error);
     return c.html(
