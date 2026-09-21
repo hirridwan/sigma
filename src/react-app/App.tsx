@@ -1128,7 +1128,6 @@ function GeneratorPage() {
       {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} onSend={sendWhatsApp} />}
       {showPaymentModal && paymentUrl && (
         <PaymentModal
-          paymentUrl={paymentUrl}
           orderId={paymentOrderId}
           txnId={paymentTxnId}
           checking={paymentChecking}
@@ -1273,7 +1272,7 @@ function TemplateModal({ onClose }: { onClose: () => void }) {
   return <ModalShell title="Pratinjau Struktur Template Default" onClose={onClose}><pre className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50 p-3.5 font-mono text-sm leading-relaxed text-slate-700">{DEFAULT_TEMPLATE}</pre><div className="mt-6 border-t border-slate-200 pt-5 text-right"><button type="button" onClick={onClose} className="rounded-xl bg-blue-600 px-6 py-2.5 font-bold text-white hover:bg-blue-700">Tutup</button></div></ModalShell>;
 }
 
-function PaymentModal({ paymentUrl, orderId, txnId, checking, message, onClose, onOpenPayment }: { paymentUrl: string; orderId: string; txnId: string; checking: boolean; message: string; onClose: () => void; onOpenPayment: () => void }) {
+function PaymentModal({ orderId, txnId, checking, message, onClose, onOpenPayment }: { orderId: string; txnId: string; checking: boolean; message: string; onClose: () => void; onOpenPayment: () => void }) {
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-3 backdrop-blur-sm sm:p-5">
       <div className="w-full max-w-xl overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10">
