@@ -206,10 +206,10 @@ async function verifyPakasirTransaction(c: any, orderId: string): Promise<boolea
 
   if (!response.ok || !transaction) return false;
   return (
-    transaction.status === "completed" &&
-    transaction.amount === PAKASIR_AMOUNT &&
-    transaction.project === PAKASIR_SLUG &&
-    transaction.order_id === orderId
+    String(transaction.status || "").toLowerCase() === "completed" &&
+    Number(transaction.amount) === PAKASIR_AMOUNT &&
+    String(transaction.project || "") === PAKASIR_SLUG &&
+    String(transaction.order_id || "") === orderId
   );
 }
 
@@ -482,12 +482,13 @@ app.post("/api/payment/download-word", async (c) => {
       data.warna_tema || "blue",
     );
     const fileName = `Modul-Ajar-${slugifyServer(data.mata_pelajaran || "SIGMA")}.doc`;
+    const encodedFileName = encodeURIComponent(fileName).replace(/['()]/g, "");
 
     return new Response("\ufeff" + html, {
       status: 200,
       headers: {
         "Content-Type": "application/msword; charset=utf-8",
-        "Content-Disposition": `attachment; filename="${fileName}"`,
+        "Content-Disposition": `attachment; filename="${fileName.replace(/"/g, "")}"; filename*=UTF-8''${encodedFileName}`,
         "Cache-Control": "no-store, no-cache, must-revalidate, private",
         "Pragma": "no-cache",
         "X-Content-Type-Options": "nosniff",

@@ -332,16 +332,13 @@ function GeneratorPage() {
   }
 
   function downloadWordFromServer(markdown: string, orderId: string, formHash: string) {
-    const frameName = `sigma-word-download-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const iframe = document.createElement("iframe");
-    iframe.name = frameName;
-    iframe.style.display = "none";
-    iframe.setAttribute("aria-hidden", "true");
+    setPaymentMessage("Pembayaran berhasil. Menyiapkan file Word untuk diunduh...");
 
     const formElement = document.createElement("form");
     formElement.method = "POST";
     formElement.action = "/api/payment/download-word";
-    formElement.target = frameName;
+    formElement.target = "_self";
+    formElement.acceptCharset = "UTF-8";
     formElement.style.display = "none";
 
     const fields: Record<string, string> = {
@@ -362,14 +359,16 @@ function GeneratorPage() {
       formElement.appendChild(input);
     }
 
-    document.body.appendChild(iframe);
     document.body.appendChild(formElement);
+
+    // Submit sebagai navigasi top-level. Karena endpoint mengembalikan
+    // Content-Disposition: attachment, browser akan mengunduh file Word
+    // tanpa perlu iframe, Blob, atau synthetic click.
     formElement.submit();
 
     window.setTimeout(() => {
       formElement.remove();
-      iframe.remove();
-    }, 5000);
+    }, 1500);
   }
 
   async function loadPaidModule(orderId: string, formHash: string): Promise<string> {
@@ -440,7 +439,9 @@ function GeneratorPage() {
           try {
             const fullMarkdown = await loadPaidModule(paymentOrderId, paymentFormHash);
             setShowPaymentModal(false);
-            downloadWordFromServer(fullMarkdown, paymentOrderId, paymentFormHash);
+            window.setTimeout(() => {
+              downloadWordFromServer(fullMarkdown, paymentOrderId, paymentFormHash);
+            }, 80);
             setPaymentOrderId("");
             setPaymentFormHash("");
             setPaymentUrl("");
