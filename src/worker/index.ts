@@ -276,14 +276,12 @@ app.post("/api/payment/create", async (c) => {
     }
 
     const orderId = `SIGMA-${formHash.slice(0, 16)}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-    const origin = new URL(c.req.url).origin;
-    const callbackUrl = new URL("/api/payment/callback", origin);
-    callbackUrl.searchParams.set("order_id", orderId);
-    callbackUrl.searchParams.set("form_hash", formHash);
 
+    // Jangan kirim parameter redirect ke Pakasir.
+    // Setelah pembayaran selesai, halaman Pakasir tetap berada di dalam iframe
+    // sementara SIGMA memeriksa status transaksi dari parent secara berkala.
     const paymentUrl = new URL(`https://app.pakasir.com/pay/${PAKASIR_SLUG}/${PAKASIR_AMOUNT}`);
     paymentUrl.searchParams.set("order_id", orderId);
-    paymentUrl.searchParams.set("redirect", callbackUrl.toString());
 
     return c.json({
       success: true,

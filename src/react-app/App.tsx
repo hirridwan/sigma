@@ -264,6 +264,7 @@ function GeneratorPage() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentChecking, setPaymentChecking] = useState(false);
   const [paymentMessage, setPaymentMessage] = useState("");
+  const [downloadSuccess, setDownloadSuccess] = useState(false);
 
   const colorHex = THEME_COLORS[form.warna_tema];
 
@@ -298,6 +299,15 @@ function GeneratorPage() {
 
     window.addEventListener("storage", handleStorage);
     return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("download") === "success") {
+      setDownloadSuccess(true);
+      window.history.replaceState({}, "", "/modul-ajar");
+      window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 50);
+    }
   }, []);
 
   function clearPaymentState() {
@@ -535,12 +545,15 @@ a { color:#000 !important; text-decoration:none !important; }
           setPaymentVerifiedFormHash(paymentFormHash);
           localStorage.setItem(PAYMENT_RESULT_KEY, JSON.stringify({ orderId: paymentOrderId, formHash: paymentFormHash, verifiedAt: Date.now() }));
           setShowPaymentModal(false);
-          setPaymentMessage("Pembayaran berhasil diverifikasi. Menyiapkan modul lengkap...");
+          setPaymentMessage("Pembayaran berhasil. Menyiapkan modul lengkap dan mengunduh Word...");
           try {
             await loadPaidModule(paymentOrderId, paymentFormHash, true);
             setPaymentOrderId("");
             setPaymentFormHash("");
             setPaymentUrl("");
+            setPaymentMessage("");
+            setDownloadSuccess(true);
+            window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 50);
           } catch {
             // Error already displayed.
           }
@@ -560,43 +573,6 @@ a { color:#000 !important; text-decoration:none !important; }
       window.clearInterval(interval);
     };
   }, [showPaymentModal, paymentOrderId, paymentFormHash]);
-
-  useEffect(() => {
-    const handlePaymentMessage = async (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return;
-      const data = event.data as { source?: string; type?: string; orderId?: string; formHash?: string; message?: string } | null;
-      if (!data || data.source !== "sigma-pakasir" || data.type !== "SIGMA_PAYMENT_SUCCESS") return;
-      if (!paymentOrderId || !paymentFormHash) return;
-      if (data.orderId !== paymentOrderId || data.formHash !== paymentFormHash) return;
-
-      setPaymentChecking(true);
-      setPaymentMessage("Pembayaran berhasil. Menyiapkan modul lengkap dan mengunduh Word...");
-      setShowPaymentModal(false);
-      try {
-        setPaymentVerifiedOrderId(data.orderId);
-        setPaymentVerifiedFormHash(data.formHash);
-        localStorage.setItem(PAYMENT_RESULT_KEY, JSON.stringify({
-          orderId: data.orderId,
-          formHash: data.formHash,
-          verifiedAt: Date.now(),
-        }));
-        await loadPaidModule(data.orderId, data.formHash, true);
-        setPaymentOrderId("");
-        setPaymentFormHash("");
-        setPaymentUrl("");
-        window.setTimeout(() => {
-          navigate("/");
-        }, 1800);
-      } catch {
-        // Error already displayed by loadPaidModule.
-      } finally {
-        setPaymentChecking(false);
-      }
-    };
-
-    window.addEventListener("message", handlePaymentMessage);
-    return () => window.removeEventListener("message", handlePaymentMessage);
-  }, [paymentOrderId, paymentFormHash]);
 
   const update = <K extends keyof GeneratorForm>(key: K, value: GeneratorForm[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -715,6 +691,7 @@ a { color:#000 !important; text-decoration:none !important; }
       }
 
       clearPaymentState();
+      setDownloadSuccess(false);
       setResultMarkdown(result.data || "");
       setPaymentMessage("");
       setTimeout(() => document.getElementById("hasil")?.scrollIntoView({ behavior: "smooth" }), 50);
@@ -733,6 +710,7 @@ a { color:#000 !important; text-decoration:none !important; }
     setReferenceStatus("");
     setResultMarkdown("");
     setError("");
+    setDownloadSuccess(false);
     localStorage.removeItem(DRAFT_KEY);
     clearPaymentState();
   }
@@ -803,6 +781,16 @@ a { color:#000 !important; text-decoration:none !important; }
           <div><strong>Draft otomatis aktif.</strong> Isian form disimpan di browser ini.</div>
           <button type="button" onClick={resetForm} className="self-start rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100 sm:self-auto">Reset Form</button>
         </div>
+
+        {downloadSuccess && (
+          <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 font-semibold text-emerald-800 shadow-sm">
+            <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm text-white">✓</span>
+            <div>
+              <div className="font-extrabold">Modul Ajar Telah Berhasil di Download dan Selesai</div>
+              <div className="mt-0.5 text-sm font-medium text-emerald-700">Pembayaran telah diverifikasi dan file Word modul ajar sudah berhasil diunduh.</div>
+            </div>
+          </div>
+        )}
 
         {error && <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-4 font-medium text-red-600"><span>⚠️</span><span>{error}</span></div>}
 
@@ -1012,7 +1000,14 @@ a { color:#000 !important; text-decoration:none !important; }
         {resultMarkdown && (
           <section id="hasil-container" className="mb-8 flex min-h-[360px] flex-col rounded-xl border border-blue-100 bg-white shadow-lg">
             <div className="relative z-40 flex flex-col items-start justify-between gap-3 rounded-t-xl border-b border-slate-100 bg-gradient-to-r from-blue-50 to-white p-4 lg:flex-row lg:items-center">
-              <div><h2 className="flex items-center gap-2 text-lg font-extrabold text-blue-900">📄 Pratinjau Modul</h2><p className="mt-1 text-xs leading-relaxed text-slate-500">Preview menampilkan struktur modul dengan isi yang disensor. Lakukan pembayaran Rp5.000 untuk melihat isi lengkap dan mengunduh Word.</p></div>
+              <div>
+                <h2 className="flex items-center gap-2 text-lg font-extrabold text-blue-900">📄 {downloadSuccess ? "Modul Ajar" : "Pratinjau Modul"}</h2>
+                <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                  {downloadSuccess
+                    ? "Pembayaran telah berhasil diverifikasi. Modul lengkap tersedia dan file Word sudah berhasil diunduh."
+                    : "Preview menampilkan struktur modul dengan isi yang disensor. Lakukan pembayaran Rp5.000 untuk melihat isi lengkap dan mengunduh Word."}
+                </p>
+              </div>
               <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-3 lg:w-auto">
                 <button type="button" onClick={editInput} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 sm:text-sm">Edit Input</button>
                 <button type="button" onClick={() => void generateModule(undefined, true)} disabled={isRegenerating} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-60 sm:text-sm">Regenerate</button>
@@ -1206,7 +1201,7 @@ function PaymentModal({ paymentUrl, orderId, checking, onClose }: { paymentUrl: 
         <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-4 py-2.5 sm:px-5">
           <span className="h-2 w-2 rounded-full bg-emerald-500" />
           <p className="text-xs font-medium text-slate-600">
-            {checking ? "Pembayaran terdeteksi. Menyiapkan modul dan mengunduh Word..." : "Selesaikan pembayaran di bawah. Setelah berhasil, Word akan terunduh otomatis dan kamu akan kembali ke beranda."}
+            {checking ? "Pembayaran terdeteksi. Popup akan ditutup dan Word sedang diunduh otomatis..." : "Selesaikan pembayaran di bawah. Setelah berhasil, popup akan tertutup dan Word akan langsung diunduh otomatis."}
           </p>
         </div>
         <div className="min-h-0 flex-1 overflow-hidden bg-slate-100 p-1">
