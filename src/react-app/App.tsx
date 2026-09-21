@@ -296,6 +296,7 @@ function GeneratorPage() {
   const [paymentMessage, setPaymentMessage] = useState("");
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const paymentHandledRef = useRef(false);
+  const paymentWindowRef = useRef<Window | null>(null);
 
   const colorHex = THEME_COLORS[form.warna_tema];
 
@@ -343,8 +344,38 @@ function GeneratorPage() {
     }
   }, []);
 
+  function closePaymentWindow() {
+    try {
+      if (paymentWindowRef.current && !paymentWindowRef.current.closed) {
+        paymentWindowRef.current.close();
+      }
+    } catch {
+      // Ignore cross-window close errors.
+    }
+    paymentWindowRef.current = null;
+  }
+
+  function focusOrOpenPaymentWindow(paymentUrlValue: string): Window | null {
+    try {
+      if (paymentWindowRef.current && !paymentWindowRef.current.closed) {
+        paymentWindowRef.current.focus();
+        return paymentWindowRef.current;
+      }
+
+      const opened = window.open(paymentUrlValue || "about:blank", "_blank");
+      if (opened) {
+        paymentWindowRef.current = opened;
+        opened.focus();
+      }
+      return opened;
+    } catch {
+      return null;
+    }
+  }
+
   function clearPaymentState() {
     paymentHandledRef.current = false;
+    closePaymentWindow();
     setPaymentVerifiedOrderId("");
     setPaymentVerifiedFormHash("");
     setPaymentVerifiedTxnId("");
@@ -479,6 +510,7 @@ function GeneratorPage() {
     setPaymentChecking(true);
     setPaymentMessage("Pembayaran berhasil. Menyiapkan modul lengkap dan mengunduh Word...");
     setShowPaymentModal(false);
+    closePaymentWindow();
 
     try {
       const fullMarkdown = await loadPaidModule(orderId, txnId, formHash, paymentProof);
@@ -500,7 +532,7 @@ function GeneratorPage() {
   }
 
   useEffect(() => {
-    if (!showPaymentModal || !paymentOrderId || !paymentTxnId || !paymentFormHash) return;
+    if (!paymentOrderId || !paymentTxnId || !paymentFormHash) return;
 
     let cancelled = false;
     let inFlight = false;
@@ -553,7 +585,7 @@ function GeneratorPage() {
         if (!cancelled) setPaymentMessage(error instanceof Error ? error.message : "Sedang menunggu verifikasi pembayaran...");
       } finally {
         inFlight = false;
-        if (!cancelled && showPaymentModal) setPaymentChecking(false);
+        if (!cancelled) setPaymentChecking(false);
       }
     };
 
@@ -563,7 +595,7 @@ function GeneratorPage() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [showPaymentModal, paymentOrderId, paymentTxnId, paymentFormHash]);
+  }, [paymentOrderId, paymentTxnId, paymentFormHash]);
 
   const update = <K extends keyof GeneratorForm>(key: K, value: GeneratorForm[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -708,6 +740,41 @@ function GeneratorPage() {
 
   async function downloadWord() {
     setError("");
+
+    const hasAnyVerifiedPayment = Boolean(
+      paymentVerifiedOrderId &&
+      paymentVerifiedTxnId &&
+      paymentVerifiedProof &&
+      paymentVerifiedFormHash
+    );
+    const hasPendingPayment = Boolean(paymentOrderId && paymentTxnId && paymentUrl && paymentFormHash);
+
+    // Open the payment tab synchronously from the user's click so browser popup
+    // blockers are much less likely to block it. The tab is navigated to the
+    // Pakasir payment link after the Worker returns the transaction.
+    let preparedPaymentWindow: Window | null = null;
+    if (!hasAnyVerifiedPayment && !hasPendingPayment) {
+      preparedPaymentWindow = focusOrOpenPaymentWindow("about:blank");
+      if (!preparedPaymentWindow) {
+        setError("Tab pembayaran tidak dapat dibuka. Izinkan pop-up untuk sigma.rmfhd.my.id lalu coba lagi.");
+        return;
+      }
+      try {
+        preparedPaymentWindow.document.title = "Pembayaran SIGMA";
+        preparedPaymentWindow.document.body.innerHTML =
+          '<div style="font-family:Arial,sans-serif;padding:32px;line-height:1.6">Menyiapkan halaman pembayaran SIGMA...</div>';
+      } catch {
+        // Ignore document access errors on the newly opened blank page.
+      }
+    }
+
+    if (hasPendingPayment && !hasAnyVerifiedPayment) {
+      if (!focusOrOpenPaymentWindow(paymentUrl)) {
+        setError("Tab pembayaran tidak dapat dibuka. Izinkan pop-up untuk sigma.rmfhd.my.id lalu coba lagi.");
+        return;
+      }
+    }
+
     const currentFormHash = await hashGeneratorForm(form);
     const hasValidPaidOrder = Boolean(
       paymentVerifiedOrderId &&
@@ -718,12 +785,16 @@ function GeneratorPage() {
     );
 
     if (!hasValidPaidOrder) {
-      if (showPaymentModal) return;
-
-      if (paymentOrderId && paymentTxnId && paymentUrl && paymentFormHash === currentFormHash) {
+      if (hasPendingPayment && paymentFormHash === currentFormHash) {
         setShowPaymentModal(true);
-        setPaymentMessage("Lanjutkan pembayaran pada jendela pembayaran di bawah.");
+        setPaymentMessage("Halaman pembayaran Pakasir sudah dibuka di tab baru. Selesaikan pembayaran di sana; SIGMA akan memverifikasi otomatis.");
         return;
+      }
+
+      // If the existing pending transaction belongs to a different form, close
+      // its tab before creating a fresh transaction for the current form.
+      if (hasPendingPayment && paymentFormHash !== currentFormHash) {
+        closePaymentWindow();
       }
 
       try {
@@ -745,12 +816,23 @@ function GeneratorPage() {
         setPaymentTxnId(result.txn_id);
         setPaymentUrl(result.payment_url);
         setShowPaymentModal(true);
-        setPaymentMessage("Silakan selesaikan pembayaran di jendela ini. SIGMA akan memverifikasi otomatis setelah pembayaran selesai.");
+        setPaymentMessage("Halaman pembayaran Pakasir sudah dibuka di tab baru. Selesaikan pembayaran di sana; SIGMA akan memverifikasi otomatis.");
+
+        const paymentWindow = preparedPaymentWindow || paymentWindowRef.current || focusOrOpenPaymentWindow("about:blank");
+        if (!paymentWindow) {
+          throw new Error("Tab pembayaran tidak dapat dibuka. Izinkan pop-up untuk sigma.rmfhd.my.id lalu coba lagi.");
+        }
+        paymentWindowRef.current = paymentWindow;
+        paymentWindow.location.href = result.payment_url;
+        paymentWindow.focus();
       } catch (err) {
+        closePaymentWindow();
         setError(err instanceof Error ? err.message : "Gagal membuka pembayaran.");
       }
       return;
     }
+
+    closePaymentWindow();
 
     try {
       const fullMarkdown = await loadPaidModule(paymentVerifiedOrderId, paymentVerifiedTxnId, currentFormHash, paymentVerifiedProof);
@@ -1052,6 +1134,12 @@ function GeneratorPage() {
           checking={paymentChecking}
           message={paymentMessage}
           onClose={() => setShowPaymentModal(false)}
+          onOpenPayment={() => {
+            const opened = focusOrOpenPaymentWindow(paymentUrl);
+            if (!opened) {
+              setPaymentMessage("Tab pembayaran tidak dapat dibuka. Izinkan pop-up untuk sigma.rmfhd.my.id lalu coba lagi.");
+            }
+          }}
         />
       )}
     </div>
@@ -1185,10 +1273,10 @@ function TemplateModal({ onClose }: { onClose: () => void }) {
   return <ModalShell title="Pratinjau Struktur Template Default" onClose={onClose}><pre className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50 p-3.5 font-mono text-sm leading-relaxed text-slate-700">{DEFAULT_TEMPLATE}</pre><div className="mt-6 border-t border-slate-200 pt-5 text-right"><button type="button" onClick={onClose} className="rounded-xl bg-blue-600 px-6 py-2.5 font-bold text-white hover:bg-blue-700">Tutup</button></div></ModalShell>;
 }
 
-function PaymentModal({ paymentUrl, orderId, txnId, checking, message, onClose }: { paymentUrl: string; orderId: string; txnId: string; checking: boolean; message: string; onClose: () => void }) {
+function PaymentModal({ paymentUrl, orderId, txnId, checking, message, onClose, onOpenPayment }: { paymentUrl: string; orderId: string; txnId: string; checking: boolean; message: string; onClose: () => void; onOpenPayment: () => void }) {
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-3 backdrop-blur-sm sm:p-5">
-      <div className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10">
+      <div className="w-full max-w-xl overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10">
         <div className="flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 py-3 sm:px-5">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -1201,20 +1289,33 @@ function PaymentModal({ paymentUrl, orderId, txnId, checking, message, onClose }
             <p className="mt-1 truncate text-[11px] text-slate-400">Order ID: {orderId}</p>
             <p className="truncate text-[10px] text-slate-400">Transaction ID: {txnId}</p>
           </div>
-          <button type="button" onClick={onClose} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-slate-500 hover:border-red-200 hover:text-red-500" aria-label="Tutup pembayaran">✕</button>
+          <button type="button" onClick={onClose} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-slate-500 hover:border-red-200 hover:text-red-500" aria-label="Tutup status pembayaran">✕</button>
         </div>
-        <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-4 py-2.5 sm:px-5">
-          <span className="h-2 w-2 rounded-full bg-emerald-500" />
-          <p className="text-xs font-medium text-slate-600">
-            {checking ? "Pembayaran terdeteksi. Sedang menyiapkan dan mengunduh Word..." : (message || "Selesaikan pembayaran di bawah. Setelah berhasil, popup akan tertutup dan Word akan langsung diunduh otomatis.")}
-          </p>
-        </div>
-        <div className="min-h-0 flex-1 overflow-hidden bg-slate-100 p-1">
-          <iframe
-            src={paymentUrl}
-            title="Pembayaran Pakasir"
-            className="h-[68vh] w-full rounded-xl border border-slate-200 bg-white sm:h-[70vh]"
-          />
+
+        <div className="p-5 sm:p-6">
+          <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-extrabold text-white">Rp</div>
+              <div>
+                <p className="font-extrabold text-blue-900">Halaman pembayaran dibuka di tab baru</p>
+                <p className="mt-1 text-sm leading-relaxed text-blue-800">
+                  Selesaikan pembayaran melalui halaman Pakasir. Jangan tutup tab pembayaran sebelum transaksi selesai. SIGMA akan memeriksa status transaksi secara otomatis.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${checking ? "animate-pulse bg-blue-500" : "bg-emerald-500"}`} />
+            <p className="text-sm font-medium leading-relaxed text-slate-600">
+              {message || "Menunggu pembayaran selesai..."}
+            </p>
+          </div>
+
+          <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-50">Sembunyikan</button>
+            <button type="button" onClick={onOpenPayment} className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-extrabold text-white hover:bg-blue-700">Buka Pembayaran</button>
+          </div>
         </div>
       </div>
     </div>
