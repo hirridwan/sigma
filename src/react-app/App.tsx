@@ -331,151 +331,48 @@ function GeneratorPage() {
     }
   }
 
-  function buildWordBlob(markdown: string): Blob {
-    const markdownHtml = DOMPurify.sanitize(marked.parse(markdown, { async: false }));
-    const source = document.createElement("div");
-    source.className = "document-preview";
-    source.innerHTML = `
-      <div class="cover-page" style="margin:0;padding:0;min-height:230mm;text-align:center;border:0;box-shadow:none;">
-        <h1 style="margin:0;padding-top:60mm;border:0;color:${colorHex};font-size:25pt;font-family:'Times New Roman',Times,serif;font-weight:bold;">MODUL AJAR</h1>
-        <div style="margin:24mm auto 0;display:inline-block;min-width:260px;border-top:2px solid ${colorHex};padding-top:5mm;text-align:left;font-family:'Times New Roman',Times,serif;font-size:12pt;line-height:150%;">
-          <p style="margin:0;padding:0;"><b>Nama Penyusun:</b> ${escapeHtml(form.nama_penyusun)}</p>
-          <p style="margin:0;padding:0;"><b>Fase / Kelas / Jenjang Sekolah:</b> ${escapeHtml(form.fase_kelas_jenjang)}</p>
-        </div>
-      </div>
-      <div>${markdownHtml}</div>
-    `;
+  function downloadWordFromServer(markdown: string, orderId: string, formHash: string) {
+    const frameName = `sigma-word-download-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const iframe = document.createElement("iframe");
+    iframe.name = frameName;
+    iframe.style.display = "none";
+    iframe.setAttribute("aria-hidden", "true");
 
-    const exportElement = source.cloneNode(true) as HTMLElement;
-    exportElement.querySelectorAll("hr").forEach((node) => node.remove());
+    const formElement = document.createElement("form");
+    formElement.method = "POST";
+    formElement.action = "/api/payment/download-word";
+    formElement.target = frameName;
+    formElement.style.display = "none";
 
-    exportElement.querySelectorAll<HTMLElement>("h1, h2, h3, h4").forEach((heading) => {
-      const replacement = document.createElement("p");
-      replacement.className = heading.tagName === "H1" || heading.tagName === "H2" ? "SigmaHeading14" : "SigmaHeading12";
-      replacement.innerHTML = heading.innerHTML;
-      replacement.style.border = "0";
-      replacement.style.boxShadow = "none";
-      replacement.style.margin = "0";
-      replacement.style.padding = "0";
-      replacement.style.textIndent = "0";
-      replacement.style.textAlign = heading.style.textAlign || "";
-      replacement.style.color = colorHex;
-      replacement.style.fontFamily = "'Times New Roman', Times, serif";
-      replacement.style.fontWeight = "bold";
-      replacement.style.lineHeight = "150%";
-      replacement.style.fontSize = heading.tagName === "H1" || heading.tagName === "H2" ? "14pt" : "12pt";
-      heading.replaceWith(replacement);
-    });
-
-    const normalizeList = (list: HTMLElement): DocumentFragment => {
-      const fragment = document.createDocumentFragment();
-      const ordered = list.tagName.toLowerCase() === "ol";
-      let number = 1;
-
-      Array.from(list.children).forEach((child) => {
-        if (!(child instanceof HTMLElement) || child.tagName.toLowerCase() !== "li") return;
-        const li = child as HTMLElement;
-        const nestedLists = Array.from(li.children).filter(
-          (node) => node instanceof HTMLElement && ["ul", "ol"].includes(node.tagName.toLowerCase()),
-        ) as HTMLElement[];
-
-        nestedLists.forEach((nested) => nested.remove());
-
-        const paragraph = document.createElement("p");
-        paragraph.className = "SigmaBody";
-        paragraph.style.margin = "0";
-        paragraph.style.padding = "0";
-        paragraph.style.textIndent = "0";
-        paragraph.style.lineHeight = "150%";
-        paragraph.style.fontFamily = "'Times New Roman', Times, serif";
-        paragraph.style.fontSize = "12pt";
-        paragraph.innerHTML = `${ordered ? `${number}.` : "•"} ${li.innerHTML}`;
-        fragment.appendChild(paragraph);
-
-        nestedLists.forEach((nested) => fragment.appendChild(normalizeList(nested)));
-        number += 1;
-      });
-
-      return fragment;
+    const fields: Record<string, string> = {
+      order_id: orderId,
+      form_hash: formHash,
+      markdown,
+      nama_penyusun: form.nama_penyusun,
+      fase_kelas_jenjang: form.fase_kelas_jenjang,
+      mata_pelajaran: form.mata_pelajaran,
+      warna_tema: form.warna_tema,
     };
 
-    exportElement.querySelectorAll<HTMLElement>("ul, ol").forEach((list) => {
-      if (list.parentElement?.closest("ul, ol")) return;
-      list.replaceWith(normalizeList(list));
-    });
-
-    const cover = exportElement.querySelector(".cover-page") as HTMLElement | null;
-    if (cover) {
-      cover.style.pageBreakAfter = "always";
-      cover.style.breakAfter = "page";
-      cover.style.margin = "0";
-      cover.style.padding = "0";
-      cover.style.border = "0";
-      cover.style.boxShadow = "none";
-      cover.style.minHeight = "230mm";
-      cover.style.display = "block";
-      cover.style.textAlign = "center";
-      cover.querySelectorAll<HTMLElement>("*").forEach((node) => {
-        node.style.borderLeft = "0";
-        node.style.borderRight = "0";
-        node.style.boxShadow = "none";
-        node.style.marginLeft = "0";
-        node.style.marginRight = "0";
-        node.style.textIndent = "0";
-      });
+    for (const [name, value] of Object.entries(fields)) {
+      const input = document.createElement("textarea");
+      input.name = name;
+      input.value = value;
+      input.style.display = "none";
+      formElement.appendChild(input);
     }
 
-    exportElement.querySelectorAll<HTMLElement>("*").forEach((node) => {
-      if (node.closest("table")) return;
-      node.style.boxShadow = "none";
-      if (!node.classList.contains("cover-page")) {
-        node.style.borderTop = "0";
-        node.style.borderBottom = "0";
-        node.style.borderLeft = "0";
-        node.style.borderRight = "0";
-      }
-    });
+    document.body.appendChild(iframe);
+    document.body.appendChild(formElement);
+    formElement.submit();
 
-    const html = `<!DOCTYPE html>
-<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-<head>
-<meta charset='utf-8'>
-<title>Modul Ajar SIGMA</title>
-<style>
-@page WordSection1 { size: 21cm 29.7cm; margin: 2.5cm 2cm 2.5cm 3cm; mso-page-orientation: portrait; }
-div.WordSection1 { page: WordSection1; }
-html, body { margin:0 !important; padding:0 !important; font-family:'Times New Roman', Times, serif !important; font-size:12pt !important; line-height:150% !important; color:#000 !important; }
-p, div, li { font-family:'Times New Roman', Times, serif !important; font-size:12pt; line-height:150%; margin:0 !important; padding:0 !important; margin-left:0 !important; margin-right:0 !important; text-indent:0 !important; mso-margin-top-alt:0 !important; mso-margin-bottom-alt:0 !important; mso-para-margin-left:0 !important; mso-para-margin-right:0 !important; }
-p.SigmaBody { font-size:12pt !important; line-height:150% !important; margin:0 !important; padding:0 !important; text-indent:0 !important; }
-p.SigmaHeading14 { font-size:14pt !important; font-weight:bold !important; line-height:150% !important; color:${colorHex} !important; margin:0 !important; padding:0 !important; text-indent:0 !important; border:0 !important; box-shadow:none !important; text-decoration:none !important; mso-margin-top-alt:0 !important; mso-margin-bottom-alt:0 !important; mso-para-margin-left:0 !important; mso-para-margin-right:0 !important; }
-p.SigmaHeading12 { font-size:12pt !important; font-weight:bold !important; line-height:150% !important; color:${colorHex} !important; margin:0 !important; padding:0 !important; text-indent:0 !important; border:0 !important; box-shadow:none !important; text-decoration:none !important; mso-margin-top-alt:0 !important; mso-margin-bottom-alt:0 !important; mso-para-margin-left:0 !important; mso-para-margin-right:0 !important; }
-.cover-page { page-break-after:always !important; break-after:page !important; text-align:center !important; margin:0 !important; padding:0 !important; min-height:230mm !important; border:0 !important; box-shadow:none !important; }
-.document-preview { margin:0 !important; padding:0 !important; }
-ul, ol { list-style:none !important; margin:0 !important; padding:0 !important; }
-table { border-collapse:collapse; width:100%; margin:0 !important; padding:0 !important; page-break-inside:auto; }
-tr { page-break-inside:avoid; page-break-after:auto; }
-th, td { border:1px solid #000; padding:6pt; vertical-align:top; font-family:'Times New Roman', Times, serif !important; font-size:12pt !important; line-height:150% !important; margin:0 !important; text-indent:0 !important; }
-a { color:#000 !important; text-decoration:none !important; }
-</style>
-</head>
-<body><div class='WordSection1'>${exportElement.innerHTML}</div></body></html>`;
-
-    return new Blob(["\ufeff", html], { type: "application/msword" });
+    window.setTimeout(() => {
+      formElement.remove();
+      iframe.remove();
+    }, 5000);
   }
 
-  function saveWordBlob(blob: Blob) {
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `Modul-Ajar-${slugify(form.mata_pelajaran || "SIGMA")}.doc`;
-    link.style.display = "none";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.setTimeout(() => URL.revokeObjectURL(url), 1500);
-  }
-
-  async function loadPaidModule(orderId: string, formHash: string, autoDownload = false) {
+  async function loadPaidModule(orderId: string, formHash: string): Promise<string> {
     setError("");
     setPaymentMessage("Menyiapkan modul lengkap...");
 
@@ -513,12 +410,7 @@ a { color:#000 !important; text-decoration:none !important; }
       }
 
       setResultMarkdown(result.data);
-      setPaymentMessage(autoDownload ? "Pembayaran berhasil. Modul lengkap sedang diunduh..." : "Pembayaran berhasil diverifikasi. Modul lengkap sudah tersedia.");
-
-      if (autoDownload) {
-        saveWordBlob(buildWordBlob(result.data));
-        setPaymentMessage("Pembayaran berhasil. Modul lengkap berhasil diunduh.");
-      }
+      return result.data;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal menyiapkan modul lengkap.");
       throw err;
@@ -544,10 +436,11 @@ a { color:#000 !important; text-decoration:none !important; }
           setPaymentVerifiedOrderId(paymentOrderId);
           setPaymentVerifiedFormHash(paymentFormHash);
           localStorage.setItem(PAYMENT_RESULT_KEY, JSON.stringify({ orderId: paymentOrderId, formHash: paymentFormHash, verifiedAt: Date.now() }));
-          setShowPaymentModal(false);
           setPaymentMessage("Pembayaran berhasil. Menyiapkan modul lengkap dan mengunduh Word...");
           try {
-            await loadPaidModule(paymentOrderId, paymentFormHash, true);
+            const fullMarkdown = await loadPaidModule(paymentOrderId, paymentFormHash);
+            setShowPaymentModal(false);
+            downloadWordFromServer(fullMarkdown, paymentOrderId, paymentFormHash);
             setPaymentOrderId("");
             setPaymentFormHash("");
             setPaymentUrl("");
@@ -754,7 +647,10 @@ a { color:#000 !important; text-decoration:none !important; }
     }
 
     try {
-      await loadPaidModule(paymentVerifiedOrderId, currentFormHash, true);
+      const fullMarkdown = await loadPaidModule(paymentVerifiedOrderId, currentFormHash);
+      downloadWordFromServer(fullMarkdown, paymentVerifiedOrderId, currentFormHash);
+      setDownloadSuccess(true);
+      setPaymentMessage("");
     } catch {
       // Error message is already displayed by loadPaidModule.
     }

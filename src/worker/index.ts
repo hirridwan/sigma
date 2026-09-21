@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { marked } from "marked";
 import {
   GoogleGenAI,
   createPartFromUri,
@@ -117,6 +118,71 @@ function buildSensoredPreviewMarkdown(markdown: string): string {
     .trim();
 
   return `${preview}\n\n---\n\n## PEMBAYARAN UNTUK MELIHAT ISI LENGKAP\n\nPreview modul menampilkan seluruh struktur, tetapi isi detail **disensor**. Lakukan pembayaran **Rp5.000** untuk melihat isi lengkap dan mengunduh modul ajar dalam format Word.`;
+}
+
+const WORD_THEME_COLORS: Record<string, string> = {
+  blue: "#1e3a8a",
+  emerald: "#047857",
+  purple: "#6d28d9",
+  slate: "#334155",
+};
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function slugifyServer(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "SIGMA";
+}
+
+function buildWordDocument(markdown: string, author: string, phase: string, theme: string): string {
+  const colorHex = WORD_THEME_COLORS[theme] || WORD_THEME_COLORS.blue;
+  const markdownHtml = marked.parse(markdown, { async: false, gfm: true, breaks: false, html: false }) as string;
+
+  return `<!DOCTYPE html>
+<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+<head>
+<meta charset='utf-8'>
+<title>Modul Ajar SIGMA</title>
+<style>
+@page WordSection1 { size: 21cm 29.7cm; margin: 2.5cm 2cm 2.5cm 3cm; mso-page-orientation: portrait; }
+div.WordSection1 { page: WordSection1; }
+html, body { margin:0 !important; padding:0 !important; font-family:'Times New Roman', Times, serif !important; font-size:12pt !important; line-height:150% !important; color:#000 !important; }
+p, div, li { font-family:'Times New Roman', Times, serif !important; font-size:12pt; line-height:150%; margin:0 !important; padding:0 !important; margin-left:0 !important; margin-right:0 !important; text-indent:0 !important; mso-margin-top-alt:0 !important; mso-margin-bottom-alt:0 !important; mso-para-margin-left:0 !important; mso-para-margin-right:0 !important; }
+p.SigmaBody { font-size:12pt !important; line-height:150% !important; margin:0 !important; padding:0 !important; text-indent:0 !important; }
+p.SigmaHeading14 { font-size:14pt !important; font-weight:bold !important; line-height:150% !important; color:${colorHex} !important; margin:0 !important; padding:0 !important; text-indent:0 !important; border:0 !important; box-shadow:none !important; }
+p.SigmaHeading12 { font-size:12pt !important; font-weight:bold !important; line-height:150% !important; color:${colorHex} !important; margin:0 !important; padding:0 !important; text-indent:0 !important; border:0 !important; box-shadow:none !important; }
+.cover-page { page-break-after:always !important; break-after:page !important; text-align:center !important; margin:0 !important; padding:0 !important; min-height:230mm !important; border:0 !important; box-shadow:none !important; }
+ul, ol { list-style:none !important; margin:0 !important; padding:0 !important; }
+table { border-collapse:collapse; width:100%; margin:0 !important; padding:0 !important; page-break-inside:auto; }
+tr { page-break-inside:avoid; page-break-after:auto; }
+th, td { border:1px solid #000; padding:6pt; vertical-align:top; font-family:'Times New Roman', Times, serif !important; font-size:12pt !important; line-height:150% !important; margin:0 !important; text-indent:0 !important; }
+a { color:#000 !important; text-decoration:none !important; }
+</style>
+</head>
+<body>
+<div class='WordSection1'>
+  <div class='cover-page'>
+    <p style='margin:0;padding-top:60mm;border:0;color:${colorHex};font-size:25pt;font-family:"Times New Roman",Times,serif;font-weight:bold;'>MODUL AJAR</p>
+    <div style='margin:24mm auto 0;display:inline-block;min-width:260px;border-top:2px solid ${colorHex};padding-top:5mm;text-align:left;font-family:"Times New Roman",Times,serif;font-size:12pt;line-height:150%;'>
+      <p style='margin:0;padding:0;'><b>Nama Penyusun:</b> ${escapeHtml(author)}</p>
+      <p style='margin:0;padding:0;'><b>Fase / Kelas / Jenjang Sekolah:</b> ${escapeHtml(phase)}</p>
+    </div>
+  </div>
+  <div>${markdownHtml}</div>
+</div>
+</body>
+</html>`;
 }
 
 async function verifyPakasirTransaction(c: any, orderId: string): Promise<boolean> {
@@ -381,6 +447,58 @@ app.get("/api/payment/verify", async (c) => {
   } catch (error) {
     console.error("SIGMA /api/payment/verify error", error);
     return c.json({ success: false, message: error instanceof Error ? error.message : "Gagal memverifikasi pembayaran." }, 500);
+  }
+});
+
+app.post("/api/payment/download-word", async (c) => {
+  try {
+    const form = await c.req.formData();
+    const data: Record<string, string> = {};
+    for (const [key, value] of form.entries()) {
+      if (typeof value === "string") data[key] = value;
+    }
+
+    const orderId = data.order_id?.trim() || "";
+    const formHash = data.form_hash?.trim().toLowerCase() || "";
+    const markdown = data.markdown || "";
+
+    if (!orderId || !formHash || !markdown) {
+      return c.json({ success: false, message: "Data download belum lengkap." }, 400);
+    }
+
+    if (!/^[a-f0-9]{64}$/.test(formHash) || !orderId.startsWith(`SIGMA-${formHash.slice(0, 16)}-`)) {
+      return c.json({ success: false, message: "Transaksi tidak cocok dengan modul ini." }, 403);
+    }
+
+    const paid = await verifyPakasirTransaction(c, orderId);
+    if (!paid) {
+      return c.json({ success: false, message: "Pembayaran belum terverifikasi." }, 402);
+    }
+
+    const html = buildWordDocument(
+      markdown,
+      data.nama_penyusun || "",
+      data.fase_kelas_jenjang || "",
+      data.warna_tema || "blue",
+    );
+    const fileName = `Modul-Ajar-${slugifyServer(data.mata_pelajaran || "SIGMA")}.doc`;
+
+    return new Response("\ufeff" + html, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/msword; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${fileName}"`,
+        "Cache-Control": "no-store, no-cache, must-revalidate, private",
+        "Pragma": "no-cache",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  } catch (error) {
+    console.error("SIGMA /api/payment/download-word error", error);
+    return c.json(
+      { success: false, message: error instanceof Error ? error.message : "Gagal membuat file Word." },
+      500,
+    );
   }
 });
 
