@@ -185,32 +185,81 @@ a { color:#000 !important; text-decoration:none !important; }
 </html>`;
 }
 
-async function verifyPakasirTransaction(c: any, orderId: string): Promise<boolean> {
+async function verifyPakasirTransactionDetailed(
+  c: any,
+  orderId: string,
+): Promise<{
+  paid: boolean;
+  transaction?: { status?: string; amount?: number; project?: string; order_id?: string; payment_method?: string; completed_at?: string };
+}> {
   if (!c.env.PAKASIR_API_KEY) {
     throw new Error("PAKASIR_API_KEY belum tersedia di Cloudflare.");
   }
 
+  // Pakasir's Transaction Detail API expects the merchant transaction amount.
+  // The customer may pay a higher total when the payment fee is borne by the payer.
   const url = new URL("https://app.pakasir.com/api/transactiondetail");
   url.searchParams.set("project", PAKASIR_SLUG);
   url.searchParams.set("amount", String(PAKASIR_AMOUNT));
   url.searchParams.set("order_id", orderId);
   url.searchParams.set("api_key", c.env.PAKASIR_API_KEY);
 
-  const response = await fetch(url.toString(), {
-    method: "GET",
-    headers: { Accept: "application/json" },
-  });
+  let lastTransaction:
+    | { status?: string; amount?: number; project?: string; order_id?: string; payment_method?: string; completed_at?: string }
+    | undefined;
 
-  const result = await response.json().catch(() => null) as { transaction?: { status?: string; amount?: number; project?: string; order_id?: string } } | null;
-  const transaction = result?.transaction;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await fetch(`${url.toString()}&_t=${Date.now()}`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "Cache-Control": "no-cache",
+      },
+    });
 
-  if (!response.ok || !transaction) return false;
-  return (
-    String(transaction.status || "").toLowerCase() === "completed" &&
-    Number(transaction.amount) === PAKASIR_AMOUNT &&
-    String(transaction.project || "") === PAKASIR_SLUG &&
-    String(transaction.order_id || "") === orderId
-  );
+    const result = await response.json().catch(() => null) as {
+      transaction?: {
+        status?: string;
+        amount?: number;
+        project?: string;
+        order_id?: string;
+        payment_method?: string;
+        completed_at?: string;
+      };
+    } | null;
+
+    const transaction = result?.transaction;
+    lastTransaction = transaction;
+
+    const status = String(transaction?.status || "").trim().toLowerCase();
+    const returnedOrderId = String(transaction?.order_id || "").trim();
+    const returnedProject = String(transaction?.project || "").trim();
+
+    // The request itself is scoped to the SIGMA project and the expected
+    // merchant amount. Require the completed status + exact order/project.
+    // The customer-facing total can include a separate payment fee.
+    if (
+      response.ok &&
+      transaction &&
+      status === "completed" &&
+      returnedOrderId === orderId &&
+      returnedProject === PAKASIR_SLUG &&
+      (!("amount" in transaction) || Number(transaction.amount) === PAKASIR_AMOUNT)
+    ) {
+      return { paid: true, transaction };
+    }
+
+    if (attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 900));
+    }
+  }
+
+  return { paid: false, transaction: lastTransaction };
+}
+
+async function verifyPakasirTransaction(c: any, orderId: string): Promise<boolean> {
+  const result = await verifyPakasirTransactionDetailed(c, orderId);
+  return result.paid;
 }
 
 function buildDefaultStructure(): string {
@@ -440,13 +489,38 @@ app.get("/api/payment/callback", async (c) => {
 app.get("/api/payment/verify", async (c) => {
   try {
     const orderId = c.req.query("order_id")?.trim();
-    if (!orderId) return c.json({ success: false, message: "order_id wajib diisi." }, 400);
+    if (!orderId) {
+      return c.json(
+        { success: false, paid: false, message: "order_id wajib diisi." },
+        400,
+        { "Cache-Control": "no-store, no-cache, must-revalidate, private" },
+      );
+    }
 
-    const paid = await verifyPakasirTransaction(c, orderId);
-    return c.json({ success: true, paid, order_id: orderId, amount: PAKASIR_AMOUNT });
+    const result = await verifyPakasirTransactionDetailed(c, orderId);
+
+    return c.json(
+      {
+        success: true,
+        paid: result.paid,
+        order_id: orderId,
+        amount: PAKASIR_AMOUNT,
+        transaction: result.transaction || null,
+      },
+      200,
+      { "Cache-Control": "no-store, no-cache, must-revalidate, private", Pragma: "no-cache" },
+    );
   } catch (error) {
     console.error("SIGMA /api/payment/verify error", error);
-    return c.json({ success: false, message: error instanceof Error ? error.message : "Gagal memverifikasi pembayaran." }, 500);
+    return c.json(
+      {
+        success: false,
+        paid: false,
+        message: error instanceof Error ? error.message : "Gagal memverifikasi pembayaran.",
+      },
+      500,
+      { "Cache-Control": "no-store, no-cache, must-revalidate, private", Pragma: "no-cache" },
+    );
   }
 });
 

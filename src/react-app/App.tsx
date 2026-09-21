@@ -331,44 +331,48 @@ function GeneratorPage() {
     }
   }
 
-  function downloadWordFromServer(markdown: string, orderId: string, formHash: string) {
+  async function downloadWordFromServer(markdown: string, orderId: string, formHash: string): Promise<void> {
     setPaymentMessage("Pembayaran berhasil. Menyiapkan file Word untuk diunduh...");
 
-    const formElement = document.createElement("form");
-    formElement.method = "POST";
-    formElement.action = "/api/payment/download-word";
-    formElement.target = "_self";
-    formElement.acceptCharset = "UTF-8";
-    formElement.style.display = "none";
+    const payload = new FormData();
+    payload.append("order_id", orderId);
+    payload.append("form_hash", formHash);
+    payload.append("markdown", markdown);
+    payload.append("nama_penyusun", form.nama_penyusun);
+    payload.append("fase_kelas_jenjang", form.fase_kelas_jenjang);
+    payload.append("mata_pelajaran", form.mata_pelajaran);
+    payload.append("warna_tema", form.warna_tema);
 
-    const fields: Record<string, string> = {
-      order_id: orderId,
-      form_hash: formHash,
-      markdown,
-      nama_penyusun: form.nama_penyusun,
-      fase_kelas_jenjang: form.fase_kelas_jenjang,
-      mata_pelajaran: form.mata_pelajaran,
-      warna_tema: form.warna_tema,
-    };
+    const response = await fetch(`/api/payment/download-word?_t=${Date.now()}`, {
+      method: "POST",
+      body: payload,
+      cache: "no-store",
+      credentials: "same-origin",
+    });
 
-    for (const [name, value] of Object.entries(fields)) {
-      const input = document.createElement("textarea");
-      input.name = name;
-      input.value = value;
-      input.style.display = "none";
-      formElement.appendChild(input);
+    if (!response.ok) {
+      const errorResult = await response.json().catch(() => null) as { message?: string } | null;
+      throw new Error(errorResult?.message || `Gagal mengunduh Word (${response.status}).`);
     }
 
-    document.body.appendChild(formElement);
+    const blob = await response.blob();
+    if (!blob.size) throw new Error("File Word yang diterima kosong.");
 
-    // Submit sebagai navigasi top-level. Karena endpoint mengembalikan
-    // Content-Disposition: attachment, browser akan mengunduh file Word
-    // tanpa perlu iframe, Blob, atau synthetic click.
-    formElement.submit();
+    const contentDisposition = response.headers.get("Content-Disposition") || "";
+    const match = contentDisposition.match(/filename\*=UTF-8''([^;]+)|filename="([^"]+)"/i);
+    const fileName = decodeURIComponent(match?.[1] || match?.[2] || `Modul-Ajar-${slugify(form.mata_pelajaran || "SIGMA")}.doc`);
 
-    window.setTimeout(() => {
-      formElement.remove();
-    }, 1500);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.rel = "noopener";
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    window.setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
 
   async function loadPaidModule(orderId: string, formHash: string): Promise<string> {
@@ -427,29 +431,49 @@ function GeneratorPage() {
       inFlight = true;
       setPaymentChecking(true);
       try {
-        const response = await fetch(`/api/payment/verify?order_id=${encodeURIComponent(paymentOrderId)}`);
-        const result = await response.json().catch(() => null) as { success?: boolean; paid?: boolean; message?: string } | null;
+        const response = await fetch(`/api/payment/verify?order_id=${encodeURIComponent(paymentOrderId)}&_t=${Date.now()}`, {
+          method: "GET",
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: { Accept: "application/json", "Cache-Control": "no-cache" },
+        });
+        const result = await response.json().catch(() => null) as {
+          success?: boolean;
+          paid?: boolean;
+          message?: string;
+          transaction?: { status?: string; amount?: number; project?: string; order_id?: string };
+        } | null;
         if (cancelled) return;
 
         if (response.ok && result?.success && result.paid) {
-          setPaymentVerifiedOrderId(paymentOrderId);
-          setPaymentVerifiedFormHash(paymentFormHash);
-          localStorage.setItem(PAYMENT_RESULT_KEY, JSON.stringify({ orderId: paymentOrderId, formHash: paymentFormHash, verifiedAt: Date.now() }));
+          const verifiedOrderId = paymentOrderId;
+          const verifiedFormHash = paymentFormHash;
+
+          setPaymentVerifiedOrderId(verifiedOrderId);
+          setPaymentVerifiedFormHash(verifiedFormHash);
+          localStorage.setItem(PAYMENT_RESULT_KEY, JSON.stringify({
+            orderId: verifiedOrderId,
+            formHash: verifiedFormHash,
+            verifiedAt: Date.now(),
+          }));
           setPaymentMessage("Pembayaran berhasil. Menyiapkan modul lengkap dan mengunduh Word...");
+
+          // Pembayaran sudah terverifikasi. Tutup popup sekarang, lalu siapkan
+          // modul lengkap dan lakukan download di halaman SIGMA.
+          setShowPaymentModal(false);
+
           try {
-            const fullMarkdown = await loadPaidModule(paymentOrderId, paymentFormHash);
-            setShowPaymentModal(false);
-            window.setTimeout(() => {
-              downloadWordFromServer(fullMarkdown, paymentOrderId, paymentFormHash);
-            }, 80);
+            const fullMarkdown = await loadPaidModule(verifiedOrderId, verifiedFormHash);
+            await downloadWordFromServer(fullMarkdown, verifiedOrderId, verifiedFormHash);
+
             setPaymentOrderId("");
             setPaymentFormHash("");
             setPaymentUrl("");
             setPaymentMessage("");
             setDownloadSuccess(true);
             window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 50);
-          } catch {
-            // Error already displayed.
+          } catch (error) {
+            setPaymentMessage(error instanceof Error ? error.message : "Gagal mengunduh modul Word.");
           }
         }
       } catch (error) {
@@ -944,6 +968,7 @@ function GeneratorPage() {
           paymentUrl={paymentUrl}
           orderId={paymentOrderId}
           checking={paymentChecking}
+          message={paymentMessage}
           onClose={() => setShowPaymentModal(false)}
         />
       )}
@@ -1078,7 +1103,7 @@ function TemplateModal({ onClose }: { onClose: () => void }) {
   return <ModalShell title="Pratinjau Struktur Template Default" onClose={onClose}><pre className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50 p-3.5 font-mono text-sm leading-relaxed text-slate-700">{DEFAULT_TEMPLATE}</pre><div className="mt-6 border-t border-slate-200 pt-5 text-right"><button type="button" onClick={onClose} className="rounded-xl bg-blue-600 px-6 py-2.5 font-bold text-white hover:bg-blue-700">Tutup</button></div></ModalShell>;
 }
 
-function PaymentModal({ paymentUrl, orderId, checking, onClose }: { paymentUrl: string; orderId: string; checking: boolean; onClose: () => void }) {
+function PaymentModal({ paymentUrl, orderId, checking, message, onClose }: { paymentUrl: string; orderId: string; checking: boolean; message: string; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-3 backdrop-blur-sm sm:p-5">
       <div className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10">
@@ -1098,7 +1123,7 @@ function PaymentModal({ paymentUrl, orderId, checking, onClose }: { paymentUrl: 
         <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-4 py-2.5 sm:px-5">
           <span className="h-2 w-2 rounded-full bg-emerald-500" />
           <p className="text-xs font-medium text-slate-600">
-            {checking ? "Pembayaran terdeteksi. Popup akan ditutup dan Word sedang diunduh otomatis..." : "Selesaikan pembayaran di bawah. Setelah berhasil, popup akan tertutup dan Word akan langsung diunduh otomatis."}
+            {checking ? "Pembayaran terdeteksi. Sedang menyiapkan dan mengunduh Word..." : (message || "Selesaikan pembayaran di bawah. Setelah berhasil, popup akan tertutup dan Word akan langsung diunduh otomatis.")}
           </p>
         </div>
         <div className="min-h-0 flex-1 overflow-hidden bg-slate-100 p-1">
